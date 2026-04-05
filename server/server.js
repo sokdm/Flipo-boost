@@ -4,7 +4,7 @@ const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
-const { exec } = require('child_process');
+const { spawn } = require('child_process');
 require('dotenv').config();
 
 const app = express();
@@ -47,65 +47,78 @@ const connectDB = async (retries = 5) => {
   }
 };
 
-// Use absolute path from env or default
-const getCacheDir = () => {
-  return process.env.PUPPETEER_CACHE_DIR || '/opt/render/project/src/.cache/puppeteer';
+// Check if Chrome exists
+const chromeExists = () => {
+  const cacheDir = process.env.PUPPETEER_CACHE_DIR || '/opt/render/project/src/.cache/puppeteer';
+  if (!fs.existsSync(cacheDir)) return false;
+  
+  try {
+    const dirs = fs.readdirSync(cacheDir).filter(d => d.startsWith('chrome-'));
+    return dirs.length > 0;
+  } catch (e) {
+    return false;
+  }
 };
 
-// Install Chrome in background
-const installChromeBackground = () => {
-  const localCache = getCacheDir();
-  
-  // Check if already installed
-  try {
-    if (fs.existsSync(localCache)) {
-      const dirs = fs.readdirSync(localCache).filter(d => d.startsWith('chrome-'));
-      if (dirs.length > 0) {
-        console.log('✅ Chrome already installed at:', localCache);
-        return;
+// Install Chrome asynchronously
+const installChrome = () => {
+  return new Promise((resolve) => {
+    if (chromeExists()) {
+      console.log('✅ Chrome already installed');
+      resolve(true);
+      return;
+    }
+
+    const cacheDir = process.env.PUPPETEER_CACHE_DIR || '/opt/render/project/src/.cache/puppeteer';
+    console.log('🌐 Starting Chrome installation...');
+    
+    // Ensure directory exists
+    try {
+      fs.mkdirSync(cacheDir, { recursive: true });
+    } catch (e) {}
+
+    const installProcess = spawn('npx', ['puppeteer', 'browsers', 'install', 'chrome'], {
+      cwd: path.join(__dirname),
+      env: { ...process.env, PUPPETEER_CACHE_DIR: cacheDir },
+      detached: true
+    });
+
+    let output = '';
+    installProcess.stdout.on('data', (data) => {
+      output += data.toString();
+      console.log('Chrome install:', data.toString().trim());
+    });
+
+    installProcess.stderr.on('data', (data) => {
+      console.error('Chrome install error:', data.toString().trim());
+    });
+
+    installProcess.on('close', (code) => {
+      if (code === 0) {
+        console.log('✅ Chrome installation completed');
+        console.log(output);
+        resolve(true);
+      } else {
+        console.log('⚠️ Chrome installation failed with code:', code);
+        resolve(false);
       }
-    }
-  } catch (e) {}
+    });
 
-  console.log('🌐 Installing Chrome in background at:', localCache);
-  
-  // Ensure directory exists
-  try {
-    fs.mkdirSync(localCache, { recursive: true });
-  } catch (e) {}
-
-  // Run installation in background
-  const child = exec('npx puppeteer browsers install chrome', {
-    cwd: __dirname,
-    env: { ...process.env, PUPPETEER_CACHE_DIR: localCache },
-    timeout: 300000
-  }, (error, stdout, stderr) => {
-    if (error) {
-      console.log('⚠️ Chrome install error:', error.message);
-    } else {
-      console.log('✅ Chrome installed successfully');
-      console.log(stdout);
-    }
+    // Timeout after 5 minutes
+    setTimeout(() => {
+      console.log('⏱️ Chrome install timeout - continuing without Chrome');
+      resolve(false);
+    }, 300000);
   });
-
-  child.unref();
 };
 
 // Initialize browser manager
 const browserManager = require('./services/automation/browserManager');
 
 const startServer = async () => {
-  // Start Chrome install in background
-  installChromeBackground();
+  // Start server immediately
+  const PORT = process.env.PORT || 10000;
   
-  // Initialize browser manager
-  await browserManager.initialize();
-  if (browserManager.isAvailable()) {
-    console.log('✅ Browser automation ready');
-  } else {
-    console.log('⏳ Browser automation loading (Chrome installing in background)...');
-  }
-
   // API Routes
   app.use('/api/auth', require('./routes/auth'));
   app.use('/api/tasks', require('./routes/tasks'));
@@ -141,13 +154,23 @@ const startServer = async () => {
     res.status(500).json({ error: 'Something went wrong!', message: err.message });
   });
 
-  const PORT = process.env.PORT || 10000;
-
+  // Start listening
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`🔗 Health check: http://localhost:${PORT}/health`);
   });
+
+  // Install Chrome in background after server starts
+  setTimeout(async () => {
+    await installChrome();
+    await browserManager.initialize();
+    if (browserManager.isAvailable()) {
+      console.log('✅ Browser automation ready');
+    } else {
+      console.log('⚠️ Browser automation not available - Chrome install may have failed');
+    }
+  }, 1000);
 };
 
 connectDB().then(startServer);
