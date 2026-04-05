@@ -1,6 +1,5 @@
 const Task = require('../models/Task');
 const taskExecutor = require('../services/automation/taskExecutor');
-const logger = require('../../utils/logger');
 
 exports.createTask = async (req, res) => {
   try {
@@ -64,7 +63,7 @@ exports.createTask = async (req, res) => {
     user.credits -= estimatedCost;
     await user.save();
 
-    logger.info(`Task created: ${task._id} by user ${user._id}`);
+    console.log(`Task created: ${task._id} by user ${user._id}`);
 
     res.status(201).json({
       success: true,
@@ -72,7 +71,6 @@ exports.createTask = async (req, res) => {
     });
   } catch (error) {
     console.error('Create task error:', error);
-    logger.error('Create task error:', error);
     res.status(500).json({ error: 'Failed to create task: ' + error.message });
   }
 };

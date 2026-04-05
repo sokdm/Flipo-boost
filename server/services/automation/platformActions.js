@@ -1,6 +1,5 @@
 const browserManager = require('./browserManager');
 const platforms = require('../../utils/platforms');
-const logger = require('../../utils/logger');
 
 class PlatformActions {
   constructor() {
@@ -24,7 +23,7 @@ class PlatformActions {
 
   async navigateToPage(page, url, taskId) {
     try {
-      logger.info(`Navigating to ${url} for task ${taskId}`);
+      console.log(`Navigating to ${url} for task ${taskId}`);
       
       await page.goto(url, {
         waitUntil: 'networkidle2',
@@ -40,7 +39,7 @@ class PlatformActions {
       
       return true;
     } catch (error) {
-      logger.error(`Navigation failed for task ${taskId}:`, error);
+      console.error(`Navigation failed for task ${taskId}:`, error);
       throw error;
     }
   }
@@ -69,7 +68,7 @@ class PlatformActions {
           }
           
           await element.click();
-          logger.info(`${actionName} successful for task ${taskId}`);
+          console.log(`${actionName} successful for task ${taskId}`);
           return true;
         }
       } catch (e) {
@@ -90,7 +89,7 @@ class PlatformActions {
       await browserManager.humanLikeDelay(2000, 4000);
       return true;
     } catch (error) {
-      logger.error(`Follow action failed for task ${taskId}:`, error);
+      console.error(`Follow action failed for task ${taskId}:`, error);
       throw error;
     }
   }
@@ -103,7 +102,7 @@ class PlatformActions {
       await browserManager.humanLikeDelay(1500, 3000);
       return true;
     } catch (error) {
-      logger.error(`Like action failed for task ${taskId}:`, error);
+      console.error(`Like action failed for task ${taskId}:`, error);
       throw error;
     }
   }
@@ -130,7 +129,7 @@ class PlatformActions {
       
       return { success: true, comment: commentText };
     } catch (error) {
-      logger.error(`Comment action failed for task ${taskId}:`, error);
+      console.error(`Comment action failed for task ${taskId}:`, error);
       throw error;
     }
   }
@@ -143,7 +142,7 @@ class PlatformActions {
       await browserManager.humanLikeDelay(viewTime, viewTime + 3000);
       return true;
     } catch (error) {
-      logger.error(`View action failed for task ${taskId}:`, error);
+      console.error(`View action failed for task ${taskId}:`, error);
       throw error;
     }
   }
