@@ -1,9 +1,6 @@
 const puppeteer = require('puppeteer-core');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const UserAgent = require('user-agents');
-const logger = require('../../utils/logger');
-const path = require('path');
-const fs = require('fs');
 
 const puppeteerExtra = require('puppeteer-extra');
 puppeteerExtra.use(StealthPlugin());
@@ -19,55 +16,36 @@ class BrowserManager {
   async initialize() {
     this.chromePath = await this.findChrome();
     this.chromeAvailable = !!this.chromePath;
-    if (this.chromeAvailable) {
-      logger.info(`✅ Chrome found at: ${this.chromePath}`);
-    } else {
-      logger.warn('⚠️ Chrome not found');
-    }
   }
 
   async findChrome() {
-    const cacheDir = process.env.PUPPETEER_CACHE_DIR || '/opt/render/project/src/.cache/puppeteer';
+    const fs = require('fs');
+    const path = require('path');
     
     const possiblePaths = [
-      // Check in PUPPETEER_CACHE_DIR
-      path.join(cacheDir, 'chrome', 'linux-121.0.6167.85', 'chrome-linux64', 'chrome'),
-      path.join(cacheDir, 'chrome', 'linux-119.0.6045.105', 'chrome-linux64', 'chrome'),
-      path.join(cacheDir, 'chrome', 'linux-122.0.6261.94', 'chrome-linux64', 'chrome'),
-      path.join(cacheDir, 'chrome', 'linux-123.0.6312.86', 'chrome-linux64', 'chrome'),
-      path.join(cacheDir, 'chrome', 'linux-124.0.6367.60', 'chrome-linux64', 'chrome'),
-      // Any version in cache
-      ...this.findChromeInCache(cacheDir),
-      // System paths
+      '/opt/render/project/src/.cache/puppeteer/chrome/linux-121.0.6167.85/chrome-linux64/chrome',
+      ...this.findChromeInCache('/opt/render/project/src/.cache/puppeteer'),
       '/usr/bin/google-chrome',
-      '/usr/bin/chromium-browser',
-      '/usr/bin/chromium',
-      '/opt/google/chrome/google-chrome',
-      process.env.PUPPETEER_EXECUTABLE_PATH
+      '/usr/bin/chromium'
     ].filter(Boolean);
 
     for (const chromePath of possiblePaths) {
       if (chromePath && fs.existsSync(chromePath)) {
-        logger.info(`Found Chrome at: ${chromePath}`);
+        console.log('Found Chrome at:', chromePath);
         return chromePath;
       }
     }
-
     return null;
   }
 
   findChromeInCache(cacheDir) {
     try {
-      if (!fs.existsSync(cacheDir)) return [];
-      
-      const chromeDir = path.join(cacheDir, 'chrome');
-      if (!fs.existsSync(chromeDir)) return [];
-      
-      const versions = fs.readdirSync(chromeDir).filter(d => d.startsWith('linux-'));
-      return versions.map(v => path.join(chromeDir, v, 'chrome-linux64', 'chrome'));
-    } catch (e) {
-      return [];
-    }
+      if (!require('fs').existsSync(cacheDir)) return [];
+      const chromeDir = require('path').join(cacheDir, 'chrome');
+      if (!require('fs').existsSync(chromeDir)) return [];
+      const versions = require('fs').readdirSync(chromeDir).filter(d => d.startsWith('linux-'));
+      return versions.map(v => require('path').join(chromeDir, v, 'chrome-linux64', 'chrome'));
+    } catch (e) { return []; }
   }
 
   isAvailable() {
@@ -80,6 +58,7 @@ class BrowserManager {
     }
 
     try {
+      // EXTREME stealth args
       const args = [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -92,29 +71,51 @@ class BrowserManager {
         '--disable-web-security',
         '--disable-features=IsolateOrigins,site-per-process',
         '--disable-blink-features=AutomationControlled',
-        '--single-process',
-        '--deterministic-fetch',
-        '--disable-site-isolation-trials'
+        '--disable-blink-features=AutomationControlled',
+        '--disable-infobars',
+        '--window-size=1920,1080',
+        '--start-maximized',
+        '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        '--disable-background-networking',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-breakpad',
+        '--disable-component-extensions-with-background-pages',
+        '--disable-default-apps',
+        '--disable-features=TranslateUI',
+        '--disable-hang-monitor',
+        '--disable-ipc-flooding-protection',
+        '--disable-popup-blocking',
+        '--disable-prompt-on-repost',
+        '--disable-renderer-backgrounding',
+        '--force-color-profile=srgb',
+        '--metrics-recording-only',
+        '--enable-automation',
+        '--password-store=basic',
+        '--use-mock-keychain'
       ];
 
       if (proxy) {
         args.push(`--proxy-server=${proxy}`);
       }
 
-      logger.info(`Launching browser for task ${taskId}`);
+      console.log(`Launching browser for task ${taskId}`);
 
       const browser = await puppeteerExtra.launch({
-        headless: 'new',
+        headless: false, // NEW: Use headed mode for more stealth
         executablePath: this.chromePath,
         args,
-        ignoreHTTPSErrors: true
+        ignoreHTTPSErrors: true,
+        defaultViewport: {
+          width: 1920,
+          height: 1080
+        }
       });
 
       this.browsers.set(taskId, browser);
-      logger.info(`Browser created for task ${taskId}`);
       return browser;
     } catch (error) {
-      logger.error(`Failed to create browser for task ${taskId}:`, error);
+      console.error(`Failed to create browser for task ${taskId}:`, error);
       throw error;
     }
   }
@@ -126,25 +127,32 @@ class BrowserManager {
 
       const page = await browser.newPage();
       
+      // Mobile viewport (more trusted)
       await page.setViewport({
-        width: 1366,
-        height: 768,
-        deviceScaleFactor: 1
+        width: 375 + Math.floor(Math.random() * 100),
+        height: 812 + Math.floor(Math.random() * 100),
+        deviceScaleFactor: 2,
+        isMobile: true,
+        hasTouch: true
       });
 
-      const userAgent = new UserAgent({ deviceCategory: 'desktop' });
-      await page.setUserAgent(userAgent.toString());
+      // iPhone user agent
+      await page.setUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1');
 
+      // Override navigator
       await page.evaluateOnNewDocument(() => {
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
         Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+        Object.defineProperty(navigator, 'platform', { get: () => 'iPhone' });
         window.chrome = { runtime: {} };
+        window.navigator.chrome = { runtime: {} };
       });
 
       this.activePages.set(taskId, page);
       return page;
     } catch (error) {
-      logger.error(`Failed to create page for task ${taskId}:`, error);
+      console.error(`Failed to create page for task ${taskId}:`, error);
       throw error;
     }
   }
@@ -156,23 +164,35 @@ class BrowserManager {
         await browser.close();
         this.browsers.delete(taskId);
         this.activePages.delete(taskId);
-        logger.info(`Browser closed for task ${taskId}`);
       }
     } catch (error) {
-      logger.error(`Error closing browser for task ${taskId}:`, error);
+      console.error(`Error closing browser for task ${taskId}:`, error);
     }
   }
 
-  async humanLikeDelay(min = 2000, max = 5000) {
+  // MUCH longer delays to appear human
+  async humanLikeDelay(min = 8000, max = 15000) {
     const delay = Math.floor(Math.random() * (max - min + 1)) + min;
+    console.log(`Waiting ${delay}ms...`);
     await new Promise(resolve => setTimeout(resolve, delay));
   }
 
   async humanLikeScroll(page) {
     await page.evaluate(async () => {
-      window.scrollBy(0, Math.floor(Math.random() * 200) + 50);
-      await new Promise(r => setTimeout(r, Math.random() * 1000 + 500));
+      const scrolls = Math.floor(Math.random() * 3) + 2;
+      for (let i = 0; i < scrolls; i++) {
+        window.scrollBy(0, Math.floor(Math.random() * 400) + 100);
+        await new Promise(r => setTimeout(r, Math.random() * 2000 + 1000));
+      }
     });
+  }
+
+  async humanLikeMouseMove(page) {
+    await page.mouse.move(
+      Math.floor(Math.random() * 300) + 50,
+      Math.floor(Math.random() * 600) + 100,
+      { steps: 5 }
+    );
   }
 }
 
