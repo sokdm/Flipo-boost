@@ -2,6 +2,9 @@
 
 echo "🚀 Starting Filpo Boost Build..."
 
+# Use absolute path for cache
+export PUPPETEER_CACHE_DIR=/opt/render/project/src/.cache/puppeteer
+
 # Install root deps
 echo "📦 Installing root dependencies..."
 npm install
@@ -21,12 +24,12 @@ echo "🔨 Building client..."
 npm run build
 cd ..
 
-# Install Chrome locally in project (not in /opt/render/.cache)
-echo "🌐 Installing Chrome locally..."
-mkdir -p .cache/puppeteer
+# Install Chrome with absolute path
+echo "🌐 Installing Chrome..."
+mkdir -p $PUPPETEER_CACHE_DIR
 cd server
-PUPPETEER_CACHE_DIR=../.cache/puppeteer npx puppeteer browsers install chrome || echo "⚠️ Chrome install failed"
+npx puppeteer browsers install chrome || echo "⚠️ Chrome install failed, will retry at runtime"
 cd ..
 
 echo "✅ Build complete!"
-ls -la .cache/puppeteer/ 2>/dev/null || echo "No local cache yet"
+ls -la $PUPPETEER_CACHE_DIR/ 2>/dev/null || echo "Cache check"

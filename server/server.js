@@ -22,7 +22,6 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use('/api/', limiter);
 
-// Health check - MUST respond immediately
 app.get('/health', (req, res) => {
   res.status(200).json({ 
     status: 'OK', 
@@ -48,24 +47,34 @@ const connectDB = async (retries = 5) => {
   }
 };
 
-// Install Chrome in background (don't block server startup)
+// Use absolute path from env or default
+const getCacheDir = () => {
+  return process.env.PUPPETEER_CACHE_DIR || '/opt/render/project/src/.cache/puppeteer';
+};
+
+// Install Chrome in background
 const installChromeBackground = () => {
-  const localCache = path.join(__dirname, '..', '.cache', 'puppeteer');
+  const localCache = getCacheDir();
   
   // Check if already installed
   try {
     if (fs.existsSync(localCache)) {
       const dirs = fs.readdirSync(localCache).filter(d => d.startsWith('chrome-'));
       if (dirs.length > 0) {
-        console.log('✅ Chrome already installed');
+        console.log('✅ Chrome already installed at:', localCache);
         return;
       }
     }
   } catch (e) {}
 
-  console.log('🌐 Installing Chrome in background...');
+  console.log('🌐 Installing Chrome in background at:', localCache);
   
-  // Run installation in background (non-blocking)
+  // Ensure directory exists
+  try {
+    fs.mkdirSync(localCache, { recursive: true });
+  } catch (e) {}
+
+  // Run installation in background
   const child = exec('npx puppeteer browsers install chrome', {
     cwd: __dirname,
     env: { ...process.env, PUPPETEER_CACHE_DIR: localCache },
@@ -79,7 +88,6 @@ const installChromeBackground = () => {
     }
   });
 
-  // Don't wait for it
   child.unref();
 };
 
@@ -87,10 +95,10 @@ const installChromeBackground = () => {
 const browserManager = require('./services/automation/browserManager');
 
 const startServer = async () => {
-  // Start Chrome install in background (don't block)
+  // Start Chrome install in background
   installChromeBackground();
   
-  // Initialize browser manager (will check if Chrome exists)
+  // Initialize browser manager
   await browserManager.initialize();
   if (browserManager.isAvailable()) {
     console.log('✅ Browser automation ready');
@@ -135,7 +143,6 @@ const startServer = async () => {
 
   const PORT = process.env.PORT || 10000;
 
-  // Start server immediately (don't wait for Chrome)
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
