@@ -10,7 +10,7 @@
     "dev": "concurrently \"npm run server\" \"npm run client\"",
     "build": "cd client && npm run build",
     "install-deps": "npm install && cd server && npm install && cd ../client && npm install",
-    "render-build": "./build.sh"
+    "render-build": "npm install && cd server && npm install && cd ../client && npm install && npm run build"
   },
   "keywords": ["social-media", "automation", "boost", "engagement"],
   "author": "Filpo Boost",

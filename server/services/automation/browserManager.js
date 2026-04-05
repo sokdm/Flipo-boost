@@ -11,23 +11,9 @@ class BrowserManager {
     this.activePages = new Map();
   }
 
-  getChromePath() {
-    // Check for Render's Chrome installation
-    const renderChrome = '/opt/render/.cache/puppeteer/chrome/linux-119.0.6045.105/chrome-linux64/chrome';
-    
-    if (process.env.PUPPETEER_EXECUTABLE_PATH && require('fs').existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
-      return process.env.PUPPETEER_EXECUTABLE_PATH;
-    }
-    
-    if (require('fs').existsSync(renderChrome)) {
-      return renderChrome;
-    }
-    
-    return undefined; // Use puppeteer's default
-  }
-
   async createBrowser(taskId, proxy = null) {
     try {
+      // FREE TIER: Use puppeteer's bundled Chromium (no disk needed)
       const args = [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -39,21 +25,25 @@ class BrowserManager {
         '--disable-extensions',
         '--disable-web-security',
         '--disable-features=IsolateOrigins,site-per-process',
-        '--disable-blink-features=AutomationControlled'
+        '--disable-blink-features=AutomationControlled',
+        '--single-process', // Critical for free tier (less memory)
+        '--no-zygote',
+        '--deterministic-fetch',
+        '--disable-features=IsolateOrigins,site-per-process,SitePerProcess',
+        '--disable-site-isolation-trials'
       ];
 
       if (proxy) {
         args.push(`--proxy-server=${proxy}`);
       }
 
-      const executablePath = this.getChromePath();
-      logger.info(`Using Chrome at: ${executablePath || 'puppeteer default'}`);
+      logger.info(`Launching browser for task ${taskId} (Free Tier Mode)`);
 
       const browser = await puppeteer.launch({
         headless: 'new',
         args,
         ignoreHTTPSErrors: true,
-        executablePath: executablePath || undefined
+        // No executablePath - uses bundled Chromium
       });
 
       this.browsers.set(taskId, browser);
@@ -71,33 +61,22 @@ class BrowserManager {
       if (!browser) throw new Error('Browser not found');
 
       const page = await browser.newPage();
-      const userAgent = new UserAgent({ deviceCategory: 'desktop' });
       
-      await page.setUserAgent(userAgent.toString());
+      // FREE TIER: Minimal viewport to save memory
       await page.setViewport({
-        width: 1920 + Math.floor(Math.random() * 100),
-        height: 1080 + Math.floor(Math.random() * 100),
-        deviceScaleFactor: 1,
-        hasTouch: false,
-        isLandscape: true,
-        isMobile: false
+        width: 1366,
+        height: 768,
+        deviceScaleFactor: 1
       });
 
-      // Set extra headers to appear more human
-      await page.setExtraHTTPHeaders({
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1'
-      });
+      // Rotate user agents
+      const userAgent = new UserAgent({ deviceCategory: 'desktop' });
+      await page.setUserAgent(userAgent.toString());
 
-      // Override navigator properties
+      // Basic stealth
       await page.evaluateOnNewDocument(() => {
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
         Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
         window.chrome = { runtime: {} };
       });
 
@@ -123,26 +102,17 @@ class BrowserManager {
     }
   }
 
-  async humanLikeDelay(min = 1000, max = 3000) {
+  async humanLikeDelay(min = 2000, max = 5000) {
+    // FREE TIER: Slower delays to avoid detection with fewer resources
     const delay = Math.floor(Math.random() * (max - min + 1)) + min;
     await new Promise(resolve => setTimeout(resolve, delay));
   }
 
   async humanLikeScroll(page) {
     await page.evaluate(async () => {
-      const scrollHeight = Math.floor(Math.random() * 300) + 100;
-      window.scrollBy(0, scrollHeight);
-      await new Promise(r => setTimeout(r, Math.random() * 500 + 200));
-      if (Math.random() > 0.7) {
-        window.scrollBy(0, -scrollHeight / 2);
-      }
+      window.scrollBy(0, Math.floor(Math.random() * 200) + 50);
+      await new Promise(r => setTimeout(r, Math.random() * 1000 + 500));
     });
-  }
-
-  async humanLikeMouseMove(page) {
-    const x = Math.floor(Math.random() * 800) + 200;
-    const y = Math.floor(Math.random() * 600) + 100;
-    await page.mouse.move(x, y, { steps: 10 });
   }
 }
 
