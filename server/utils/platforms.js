@@ -42,7 +42,7 @@ const platforms = {
     name: 'Facebook',
     color: '#1877F2',
     icon: 'Facebook',
-    services: ['followers', 'likes', 'comments services: ['followers', 'likes', 'comments', 'shares'],
+    services: ['followers', 'likes', 'comments', 'shares'],
     baseUrl: 'https://www.facebook.com',
     selectors: {
       followButton: 'div[aria-label="Follow"], button:has-text("Follow")',
