@@ -4,14 +4,13 @@ const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
+const { execSync } = require('child_process');
 require('dotenv').config();
 
 const app = express();
 
-// Trust proxy (required for Render)
 app.set('trust proxy', 1);
 
-// Rate limiting
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
@@ -19,12 +18,10 @@ const limiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Middleware
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use('/api/', limiter);
 
-// Health check
 app.get('/health', (req, res) => {
   res.status(200).json({ 
     status: 'OK', 
@@ -33,7 +30,6 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Database connection
 const connectDB = async (retries = 5) => {
   try {
     await mongoose.connect(process.env.MONGODB_URI, {
@@ -51,64 +47,82 @@ const connectDB = async (retries = 5) => {
   }
 };
 
-// Initialize browser manager (don't block startup)
+// Install Chrome if not present (for first run on Standard tier)
+const installChrome = async () => {
+  const cacheDir = '/opt/render/.cache/puppeteer';
+  if (!fs.existsSync(cacheDir)) {
+    fs.mkdirSync(cacheDir, { recursive: true });
+  }
+  
+  try {
+    console.log('🌐 Installing Chrome for Puppeteer...');
+    execSync('cd server && npx puppeteer browsers install chrome', { 
+      stdio: 'inherit',
+      timeout: 120000 
+    });
+    console.log('✅ Chrome installed successfully');
+  } catch (error) {
+    console.log('⚠️ Chrome install failed (may already exist or disk not ready):', error.message);
+  }
+};
+
+// Initialize browser manager
 const browserManager = require('./services/automation/browserManager');
-browserManager.initialize().then(() => {
+
+const startServer = async () => {
+  // Try to install Chrome on startup (Standard tier only)
+  await installChrome();
+  
+  // Initialize browser manager
+  await browserManager.initialize();
   if (browserManager.isAvailable()) {
     console.log('✅ Browser automation ready');
   } else {
-    console.log('⚠️ Browser automation not available - upgrade to Standard tier for full features');
+    console.log('⚠️ Browser automation not available - check disk mount');
   }
-}).catch(err => {
-  console.log('⚠️ Browser initialization failed:', err.message);
-});
 
-// API Routes
-app.use('/api/auth', require('./routes/auth'));
-app.use('/api/tasks', require('./routes/tasks'));
-app.use('/api/user', require('./routes/user'));
-app.use('/api/platforms', require('./routes/platforms'));
+  // API Routes
+  app.use('/api/auth', require('./routes/auth'));
+  app.use('/api/tasks', require('./routes/tasks'));
+  app.use('/api/user', require('./routes/user'));
+  app.use('/api/platforms', require('./routes/platforms'));
 
-// Serve static files in production
-if (process.env.NODE_ENV === 'production') {
-  const clientDist = path.join(__dirname, '../client/dist');
-  
-  if (fs.existsSync(clientDist)) {
-    console.log('📁 Serving static files from:', clientDist);
-    app.use(express.static(clientDist));
+  // Serve static files
+  if (process.env.NODE_ENV === 'production') {
+    const clientDist = path.join(__dirname, '../client/dist');
     
-    app.get('*', (req, res) => {
-      const indexPath = path.join(clientDist, 'index.html');
-      if (fs.existsSync(indexPath)) {
-        res.sendFile(indexPath);
-      } else {
-        res.status(404).json({ error: 'Frontend not built. index.html not found.' });
-      }
-    });
-  } else {
-    console.error('❌ Client dist folder not found at:', clientDist);
-    app.get('/', (req, res) => {
-      res.json({ 
-        error: 'Frontend not built', 
-        message: 'Client dist folder missing. Build may have failed.',
-        distPath: clientDist
+    if (fs.existsSync(clientDist)) {
+      console.log('📁 Serving static files from:', clientDist);
+      app.use(express.static(clientDist));
+      
+      app.get('*', (req, res) => {
+        const indexPath = path.join(clientDist, 'index.html');
+        if (fs.existsSync(indexPath)) {
+          res.sendFile(indexPath);
+        } else {
+          res.status(404).json({ error: 'Frontend not built' });
+        }
       });
-    });
+    } else {
+      console.error('❌ Client dist folder not found');
+      app.get('/', (req, res) => {
+        res.json({ error: 'Frontend not built' });
+      });
+    }
   }
-}
 
-// Error handling
-app.use((err, req, res, next) => {
-  console.error('Error:', err.stack);
-  res.status(500).json({ error: 'Something went wrong!', message: err.message });
-});
+  app.use((err, req, res, next) => {
+    console.error('Error:', err.stack);
+    res.status(500).json({ error: 'Something went wrong!', message: err.message });
+  });
 
-const PORT = process.env.PORT || 10000;
+  const PORT = process.env.PORT || 10000;
 
-connectDB().then(() => {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`🔗 Health check: http://localhost:${PORT}/health`);
   });
-});
+};
+
+connectDB().then(startServer);
