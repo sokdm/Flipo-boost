@@ -27,28 +27,25 @@ class BrowserManager {
   }
 
   async findChrome() {
+    const cacheDir = process.env.PUPPETEER_CACHE_DIR || '/opt/render/project/src/.cache/puppeteer';
+    
     const possiblePaths = [
-      // Local project cache (Render build)
-      path.join(__dirname, '..', '..', '.cache', 'puppeteer', 'chrome', 'linux-119.0.6045.105', 'chrome-linux64', 'chrome'),
-      path.join(__dirname, '..', '..', '.cache', 'puppeteer', 'chrome', 'linux-121.0.6167.85', 'chrome-linux64', 'chrome'),
-      path.join(__dirname, '..', '..', '.cache', 'puppeteer', 'chrome', 'linux-122.0.6261.94', 'chrome-linux64', 'chrome'),
-      path.join(__dirname, '..', '..', '.cache', 'puppeteer', 'chrome', 'linux-123.0.6312.86', 'chrome-linux64', 'chrome'),
-      path.join(__dirname, '..', '..', '.cache', 'puppeteer', 'chrome', 'linux-124.0.6367.60', 'chrome-linux64', 'chrome'),
-      // Render disk (if mounted)
-      '/opt/render/.cache/puppeteer/chrome/linux-119.0.6045.105/chrome-linux64/chrome',
-      '/opt/render/.cache/puppeteer/chrome/linux-121.0.6167.85/chrome-linux64/chrome',
-      '/opt/render/.cache/puppeteer/chrome/linux-122.0.6261.94/chrome-linux64/chrome',
-      '/opt/render/.cache/puppeteer/chrome/linux-123.0.6312.86/chrome-linux64/chrome',
-      '/opt/render/.cache/puppeteer/chrome/linux-124.0.6367.60/chrome-linux64/chrome',
+      // Check in PUPPETEER_CACHE_DIR
+      path.join(cacheDir, 'chrome', 'linux-121.0.6167.85', 'chrome-linux64', 'chrome'),
+      path.join(cacheDir, 'chrome', 'linux-119.0.6045.105', 'chrome-linux64', 'chrome'),
+      path.join(cacheDir, 'chrome', 'linux-122.0.6261.94', 'chrome-linux64', 'chrome'),
+      path.join(cacheDir, 'chrome', 'linux-123.0.6312.86', 'chrome-linux64', 'chrome'),
+      path.join(cacheDir, 'chrome', 'linux-124.0.6367.60', 'chrome-linux64', 'chrome'),
+      // Any version in cache
+      ...this.findChromeInCache(cacheDir),
       // System paths
-      process.env.PUPPETEER_EXECUTABLE_PATH,
       '/usr/bin/google-chrome',
       '/usr/bin/chromium-browser',
       '/usr/bin/chromium',
-      '/opt/google/chrome/google-chrome'
-    ];
+      '/opt/google/chrome/google-chrome',
+      process.env.PUPPETEER_EXECUTABLE_PATH
+    ].filter(Boolean);
 
-    // Try exact paths first
     for (const chromePath of possiblePaths) {
       if (chromePath && fs.existsSync(chromePath)) {
         logger.info(`Found Chrome at: ${chromePath}`);
@@ -56,35 +53,21 @@ class BrowserManager {
       }
     }
 
-    // Try to find in local cache directory
-    try {
-      const localCache = path.join(__dirname, '..', '..', '.cache', 'puppeteer', 'chrome');
-      if (fs.existsSync(localCache)) {
-        const dirs = fs.readdirSync(localCache);
-        for (const dir of dirs) {
-          const chromePath = path.join(localCache, dir, 'chrome-linux64', 'chrome');
-          if (fs.existsSync(chromePath)) {
-            logger.info(`Found Chrome in local cache: ${chromePath}`);
-            return chromePath;
-          }
-        }
-      }
-    } catch (e) {
-      // Ignore
-    }
-
-    // Try which command
-    try {
-      const { execSync } = require('child_process');
-      const chromePath = execSync('which google-chrome || which chromium-browser || which chromium 2>/dev/null', { encoding: 'utf8' }).trim();
-      if (chromePath && fs.existsSync(chromePath)) {
-        return chromePath;
-      }
-    } catch (e) {
-      // Not found
-    }
-
     return null;
+  }
+
+  findChromeInCache(cacheDir) {
+    try {
+      if (!fs.existsSync(cacheDir)) return [];
+      
+      const chromeDir = path.join(cacheDir, 'chrome');
+      if (!fs.existsSync(chromeDir)) return [];
+      
+      const versions = fs.readdirSync(chromeDir).filter(d => d.startsWith('linux-'));
+      return versions.map(v => path.join(chromeDir, v, 'chrome-linux64', 'chrome'));
+    } catch (e) {
+      return [];
+    }
   }
 
   isAvailable() {
@@ -93,7 +76,7 @@ class BrowserManager {
 
   async createBrowser(taskId, proxy = null) {
     if (!this.chromeAvailable) {
-      throw new Error('Chrome not available. Install with: cd server && PUPPETEER_CACHE_DIR=../.cache/puppeteer npx puppeteer browsers install chrome');
+      throw new Error('Chrome not available');
     }
 
     try {
