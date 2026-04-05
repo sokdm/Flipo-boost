@@ -47,25 +47,29 @@ const connectDB = async (retries = 5) => {
   }
 };
 
-// Install Chrome if disk is available
+// Install Chrome locally if not present
 const installChrome = async () => {
-  const cacheDir = '/opt/render/.cache/puppeteer';
-  
-  // Check if disk is mounted
-  if (!fs.existsSync('/opt/render/.cache')) {
-    console.log('⚠️ Disk not mounted at /opt/render/.cache - Chrome cannot be installed');
-    return false;
-  }
+  const localCache = path.join(__dirname, '..', '.cache', 'puppeteer');
   
   try {
-    if (!fs.existsSync(cacheDir)) {
-      fs.mkdirSync(cacheDir, { recursive: true });
+    if (!fs.existsSync(localCache)) {
+      fs.mkdirSync(localCache, { recursive: true });
     }
     
-    console.log('🌐 Installing Chrome for Puppeteer...');
-    execSync('cd server && npx puppeteer browsers install chrome', { 
+    // Check if Chrome already exists
+    const chromeDirs = fs.readdirSync(localCache).filter(d => d.startsWith('chrome-'));
+    if (chromeDirs.length > 0) {
+      console.log('✅ Chrome already installed locally');
+      return true;
+    }
+    
+    console.log('🌐 Installing Chrome locally...');
+    process.env.PUPPETEER_CACHE_DIR = localCache;
+    execSync('npx puppeteer browsers install chrome', { 
+      cwd: __dirname,
       stdio: 'inherit',
-      timeout: 120000 
+      timeout: 180000,
+      env: { ...process.env, PUPPETEER_CACHE_DIR: localCache }
     });
     console.log('✅ Chrome installed successfully');
     return true;
@@ -79,10 +83,10 @@ const installChrome = async () => {
 const browserManager = require('./services/automation/browserManager');
 
 const startServer = async () => {
-  // Check disk and install Chrome
-  const chromeInstalled = await installChrome();
+  // Try to install Chrome
+  await installChrome();
   
-  // Initialize browser manager
+  // Initialize browser manager with local path
   await browserManager.initialize();
   if (browserManager.isAvailable()) {
     console.log('✅ Browser automation ready');

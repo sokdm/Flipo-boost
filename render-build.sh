@@ -6,7 +6,7 @@ echo "🚀 Starting Filpo Boost Build..."
 echo "📦 Installing root dependencies..."
 npm install
 
-# Install server deps (without postinstall)
+# Install server deps
 echo "📦 Installing server dependencies..."
 cd server
 npm install --ignore-scripts
@@ -21,17 +21,12 @@ echo "🔨 Building client..."
 npm run build
 cd ..
 
-# Try to install Chrome for Puppeteer (will work on Standard tier with disk)
-echo "🌐 Checking for Chrome..."
-if [ -d "/opt/render/.cache/puppeteer" ]; then
-  echo "📁 Puppeteer cache directory exists"
-  cd server
-  npx puppeteer browsers install chrome || echo "⚠️ Chrome install failed, will retry at runtime"
-  cd ..
-else
-  echo "⚠️ No puppeteer cache dir (expected on first deploy)"
-fi
+# Install Chrome locally in project (not in /opt/render/.cache)
+echo "🌐 Installing Chrome locally..."
+mkdir -p .cache/puppeteer
+cd server
+PUPPETEER_CACHE_DIR=../.cache/puppeteer npx puppeteer browsers install chrome || echo "⚠️ Chrome install failed"
+cd ..
 
 echo "✅ Build complete!"
-echo "📁 Checking client/dist..."
-ls -la client/dist/ || echo "❌ dist folder not found"
+ls -la .cache/puppeteer/ 2>/dev/null || echo "No local cache yet"

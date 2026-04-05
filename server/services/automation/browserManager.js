@@ -2,6 +2,8 @@ const puppeteer = require('puppeteer-core');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const UserAgent = require('user-agents');
 const logger = require('../../utils/logger');
+const path = require('path');
+const fs = require('fs');
 
 const puppeteerExtra = require('puppeteer-extra');
 puppeteerExtra.use(StealthPlugin());
@@ -25,13 +27,20 @@ class BrowserManager {
   }
 
   async findChrome() {
-    // Check Render disk path first
     const possiblePaths = [
+      // Local project cache (Render build)
+      path.join(__dirname, '..', '..', '.cache', 'puppeteer', 'chrome', 'linux-119.0.6045.105', 'chrome-linux64', 'chrome'),
+      path.join(__dirname, '..', '..', '.cache', 'puppeteer', 'chrome', 'linux-121.0.6167.85', 'chrome-linux64', 'chrome'),
+      path.join(__dirname, '..', '..', '.cache', 'puppeteer', 'chrome', 'linux-122.0.6261.94', 'chrome-linux64', 'chrome'),
+      path.join(__dirname, '..', '..', '.cache', 'puppeteer', 'chrome', 'linux-123.0.6312.86', 'chrome-linux64', 'chrome'),
+      path.join(__dirname, '..', '..', '.cache', 'puppeteer', 'chrome', 'linux-124.0.6367.60', 'chrome-linux64', 'chrome'),
+      // Render disk (if mounted)
       '/opt/render/.cache/puppeteer/chrome/linux-119.0.6045.105/chrome-linux64/chrome',
       '/opt/render/.cache/puppeteer/chrome/linux-121.0.6167.85/chrome-linux64/chrome',
       '/opt/render/.cache/puppeteer/chrome/linux-122.0.6261.94/chrome-linux64/chrome',
       '/opt/render/.cache/puppeteer/chrome/linux-123.0.6312.86/chrome-linux64/chrome',
       '/opt/render/.cache/puppeteer/chrome/linux-124.0.6367.60/chrome-linux64/chrome',
+      // System paths
       process.env.PUPPETEER_EXECUTABLE_PATH,
       '/usr/bin/google-chrome',
       '/usr/bin/chromium-browser',
@@ -39,25 +48,23 @@ class BrowserManager {
       '/opt/google/chrome/google-chrome'
     ];
 
-    const fs = require('fs');
-    
     // Try exact paths first
-    for (const path of possiblePaths) {
-      if (path && fs.existsSync(path)) {
-        logger.info(`Found Chrome at: ${path}`);
-        return path;
+    for (const chromePath of possiblePaths) {
+      if (chromePath && fs.existsSync(chromePath)) {
+        logger.info(`Found Chrome at: ${chromePath}`);
+        return chromePath;
       }
     }
 
-    // Try to find in puppeteer cache directory (wildcard)
+    // Try to find in local cache directory
     try {
-      const cacheDir = '/opt/render/.cache/puppeteer/chrome';
-      if (fs.existsSync(cacheDir)) {
-        const dirs = fs.readdirSync(cacheDir);
+      const localCache = path.join(__dirname, '..', '..', '.cache', 'puppeteer', 'chrome');
+      if (fs.existsSync(localCache)) {
+        const dirs = fs.readdirSync(localCache);
         for (const dir of dirs) {
-          const chromePath = `${cacheDir}/${dir}/chrome-linux64/chrome`;
+          const chromePath = path.join(localCache, dir, 'chrome-linux64', 'chrome');
           if (fs.existsSync(chromePath)) {
-            logger.info(`Found Chrome in cache: ${chromePath}`);
+            logger.info(`Found Chrome in local cache: ${chromePath}`);
             return chromePath;
           }
         }
@@ -86,7 +93,7 @@ class BrowserManager {
 
   async createBrowser(taskId, proxy = null) {
     if (!this.chromeAvailable) {
-      throw new Error('Chrome not available. Run "npx puppeteer browsers install chrome" or check disk mount.');
+      throw new Error('Chrome not available. Install with: cd server && PUPPETEER_CACHE_DIR=../.cache/puppeteer npx puppeteer browsers install chrome');
     }
 
     try {
