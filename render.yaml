@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: filpo-boost
+    env: node
+    buildCommand: npm run render-build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: PUPPETEER_CACHE_DIR
+        value: /opt/render/.cache/puppeteer
+    disk:
+      name: puppeteer-cache
+      mountPath: /opt/render/.cache/puppeteer
+      sizeGB: 2

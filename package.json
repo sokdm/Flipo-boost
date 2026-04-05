@@ -1,0 +1,21 @@
+{
+  "name": "filpo-boost",
+  "version": "1.0.0",
+  "description": "Filpo Boost - Social Media Automation Platform",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "server": "cd server && npm run dev",
+    "client": "cd client && npm run dev",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "build": "cd client && npm run build",
+    "install-deps": "npm install && cd server && npm install && cd ../client && npm install",
+    "render-build": "npm install && cd server && npm install && cd ../client && npm install && npm run build"
+  },
+  "keywords": ["social-media", "automation", "boost", "engagement"],
+  "author": "Filpo Boost",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
