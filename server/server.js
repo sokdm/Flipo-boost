@@ -24,7 +24,7 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use('/api/', limiter);
 
-// Health check (MUST be before other routes for Render)
+// Health check
 app.get('/health', (req, res) => {
   res.status(200).json({ 
     status: 'OK', 
@@ -33,12 +33,10 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Database connection with retry
+// Database connection
 const connectDB = async (retries = 5) => {
   try {
     await mongoose.connect(process.env.MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
       serverSelectionTimeoutMS: 5000,
     });
     console.log('✅ MongoDB Atlas Connected');
@@ -53,6 +51,18 @@ const connectDB = async (retries = 5) => {
   }
 };
 
+// Initialize browser manager (don't block startup)
+const browserManager = require('./services/automation/browserManager');
+browserManager.initialize().then(() => {
+  if (browserManager.isAvailable()) {
+    console.log('✅ Browser automation ready');
+  } else {
+    console.log('⚠️ Browser automation not available - upgrade to Standard tier for full features');
+  }
+}).catch(err => {
+  console.log('⚠️ Browser initialization failed:', err.message);
+});
+
 // API Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/tasks', require('./routes/tasks'));
@@ -63,7 +73,6 @@ app.use('/api/platforms', require('./routes/platforms'));
 if (process.env.NODE_ENV === 'production') {
   const clientDist = path.join(__dirname, '../client/dist');
   
-  // Check if dist exists
   if (fs.existsSync(clientDist)) {
     console.log('📁 Serving static files from:', clientDist);
     app.use(express.static(clientDist));
@@ -96,7 +105,6 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 10000;
 
-// Start server only after DB connects
 connectDB().then(() => {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);

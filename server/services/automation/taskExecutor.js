@@ -2,15 +2,40 @@ const browserManager = require('./browserManager');
 const platformActions = require('./platformActions');
 const Task = require('../../models/Task');
 const logger = require('../../utils/logger');
-const platforms = require('../../utils/platforms');
 
 class TaskExecutor {
   constructor() {
     this.runningTasks = new Map();
+    this.initialized = false;
+  }
+
+  async initialize() {
+    if (!this.initialized) {
+      await browserManager.initialize();
+      this.initialized = true;
+    }
   }
 
   async executeTask(taskId) {
     try {
+      await this.initialize();
+
+      // Check if Chrome is available
+      if (!browserManager.isAvailable()) {
+        const task = await Task.findById(taskId);
+        if (task) {
+          task.status = 'failed';
+          task.logs.push({
+            message: 'Browser automation not available on free tier. Please upgrade to Standard tier ($7/month) for full automation features.',
+            type: 'error',
+            timestamp: new Date()
+          });
+          await task.save();
+        }
+        logger.error('Chrome not available - cannot execute automation task');
+        return;
+      }
+
       const task = await Task.findById(taskId);
       if (!task) {
         throw new Error('Task not found');
@@ -22,7 +47,6 @@ class TaskExecutor {
 
       this.runningTasks.set(taskId, { startTime: Date.now(), shouldStop: false });
       
-      // Update task status
       task.status = 'running';
       task.startedAt = new Date();
       task.logs.push({
@@ -32,7 +56,6 @@ class TaskExecutor {
       });
       await task.save();
 
-      // Create browser
       const proxy = task.settings.proxyEnabled ? this.getRandomProxy() : null;
       const browser = await browserManager.createBrowser(taskId, proxy);
       const page = await browserManager.createPage(taskId, task.platform);
@@ -40,13 +63,10 @@ class TaskExecutor {
       let completedCount = 0;
       const targetCount = task.quantity;
 
-      // Main execution loop
       while (completedCount < targetCount && !this.runningTasks.get(taskId)?.shouldStop) {
         try {
-          // Navigate to target
           await platformActions.navigateToPage(page, task.targetUrl, taskId);
           
-          // Perform action based on service type
           let actionSuccess = false;
           
           switch (task.service) {
@@ -84,18 +104,13 @@ class TaskExecutor {
             });
           }
 
-          // Human-like delay between actions (prevents detection)
           const delayBase = task.settings.speed === 'fast' ? 3000 : 
                            task.settings.speed === 'slow' ? 15000 : 8000;
           const delayVariation = Math.random() * 5000;
           await browserManager.humanLikeDelay(delayBase, delayBase + delayVariation);
 
-          // Occasionally scroll and move mouse like human
           if (Math.random() > 0.5) {
             await browserManager.humanLikeScroll(page);
-          }
-          if (Math.random() > 0.7) {
-            await browserManager.humanLikeMouseMove(page);
           }
 
           await task.save();
@@ -108,7 +123,6 @@ class TaskExecutor {
             timestamp: new Date()
           });
           
-          // Continue with next attempt unless too many errors
           if (task.logs.filter(l => l.type === 'error').length > 5) {
             throw new Error('Too many consecutive errors');
           }
@@ -118,7 +132,6 @@ class TaskExecutor {
         }
       }
 
-      // Task completed or stopped
       task.status = this.runningTasks.get(taskId)?.shouldStop ? 'paused' : 'completed';
       task.completedAt = new Date();
       task.logs.push({

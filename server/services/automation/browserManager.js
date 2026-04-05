@@ -3,7 +3,7 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const UserAgent = require('user-agents');
 const logger = require('../../utils/logger');
 
-// Apply stealth plugin to puppeteer-core
+// Apply stealth plugin
 const puppeteerExtra = require('puppeteer-extra');
 puppeteerExtra.use(StealthPlugin());
 
@@ -12,54 +12,62 @@ class BrowserManager {
     this.browsers = new Map();
     this.activePages = new Map();
     this.chromePath = null;
+    this.chromeAvailable = false;
+  }
+
+  async initialize() {
+    this.chromePath = await this.findChrome();
+    this.chromeAvailable = !!this.chromePath;
+    if (this.chromeAvailable) {
+      logger.info(`✅ Chrome found at: ${this.chromePath}`);
+    } else {
+      logger.warn('⚠️ Chrome not found - automation tasks will fail');
+    }
   }
 
   async findChrome() {
-    // Check common Chrome locations on Render
     const possiblePaths = [
       process.env.PUPPETEER_EXECUTABLE_PATH,
       '/usr/bin/google-chrome',
       '/usr/bin/chromium-browser',
       '/usr/bin/chromium',
       '/opt/google/chrome/google-chrome',
-      '/opt/render/.cache/puppeteer/chrome/linux-119.0.6045.105/chrome-linux64/chrome',
-      '/opt/render/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome'
+      '/usr/lib/chromium/chromium',
+      '/snap/bin/chromium',
+      '/usr/lib/chromium-browser/chromium-browser'
     ];
 
     const fs = require('fs');
     for (const path of possiblePaths) {
       if (path && fs.existsSync(path)) {
-        logger.info(`Found Chrome at: ${path}`);
         return path;
       }
     }
 
-    // Try to find using 'which' command
+    // Try which command
     try {
       const { execSync } = require('child_process');
-      const chromePath = execSync('which google-chrome || which chromium-browser || which chromium', { encoding: 'utf8' }).trim();
+      const chromePath = execSync('which google-chrome || which chromium-browser || which chromium 2>/dev/null', { encoding: 'utf8' }).trim();
       if (chromePath && fs.existsSync(chromePath)) {
         return chromePath;
       }
     } catch (e) {
-      // Command failed
+      // Not found
     }
 
-    logger.warn('No Chrome found, automation will be disabled');
     return null;
   }
 
+  isAvailable() {
+    return this.chromeAvailable;
+  }
+
   async createBrowser(taskId, proxy = null) {
+    if (!this.chromeAvailable) {
+      throw new Error('Chrome not available on this system. Free tier does not support browser automation.');
+    }
+
     try {
-      // Find Chrome if not already found
-      if (!this.chromePath) {
-        this.chromePath = await this.findChrome();
-      }
-
-      if (!this.chromePath) {
-        throw new Error('Chrome not found on system. Please install Chrome or use Standard tier with disk.');
-      }
-
       const args = [
         '--no-sandbox',
         '--disable-setuid-sandbox',
