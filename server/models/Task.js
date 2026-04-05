@@ -4,7 +4,8 @@ const taskSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true
+    required: true,
+    index: true
   },
   platform: {
     type: String,
@@ -14,7 +15,7 @@ const taskSchema = new mongoose.Schema({
   service: {
     type: String,
     required: true,
-    enum: ['followers', 'likes', 'comments', 'views', 'shares', 'subscribers']
+    enum: ['followers', 'likes', 'comments', 'views', 'shares', 'subscribers', 'retweets']
   },
   targetUrl: {
     type: String,
@@ -45,7 +46,7 @@ const taskSchema = new mongoose.Schema({
     type: { type: String, enum: ['info', 'success', 'error', 'warning'] }
   }],
   settings: {
-    speed: { type: String, default: 'medium' }, // slow, medium, fast
+    speed: { type: String, default: 'medium' },
     proxyEnabled: { type: Boolean, default: false },
     humanBehavior: { type: Boolean, default: true }
   },
@@ -58,5 +59,9 @@ const taskSchema = new mongoose.Schema({
 }, {
   timestamps: true
 });
+
+// Index for faster queries
+taskSchema.index({ userId: 1, createdAt: -1 });
+taskSchema.index({ status: 1 });
 
 module.exports = mongoose.model('Task', taskSchema);
