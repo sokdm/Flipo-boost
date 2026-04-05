@@ -11,6 +11,21 @@ class BrowserManager {
     this.activePages = new Map();
   }
 
+  getChromePath() {
+    // Check for Render's Chrome installation
+    const renderChrome = '/opt/render/.cache/puppeteer/chrome/linux-119.0.6045.105/chrome-linux64/chrome';
+    
+    if (process.env.PUPPETEER_EXECUTABLE_PATH && require('fs').existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) {
+      return process.env.PUPPETEER_EXECUTABLE_PATH;
+    }
+    
+    if (require('fs').existsSync(renderChrome)) {
+      return renderChrome;
+    }
+    
+    return undefined; // Use puppeteer's default
+  }
+
   async createBrowser(taskId, proxy = null) {
     try {
       const args = [
@@ -23,18 +38,22 @@ class BrowserManager {
         '--disable-gpu',
         '--disable-extensions',
         '--disable-web-security',
-        '--disable-features=IsolateOrigins,site-per-process'
+        '--disable-features=IsolateOrigins,site-per-process',
+        '--disable-blink-features=AutomationControlled'
       ];
 
       if (proxy) {
         args.push(`--proxy-server=${proxy}`);
       }
 
+      const executablePath = this.getChromePath();
+      logger.info(`Using Chrome at: ${executablePath || 'puppeteer default'}`);
+
       const browser = await puppeteer.launch({
-        headless: process.env.PUPPETEER_HEADLESS === 'true' ? 'new' : false,
+        headless: 'new',
         args,
         ignoreHTTPSErrors: true,
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
+        executablePath: executablePath || undefined
       });
 
       this.browsers.set(taskId, browser);
@@ -113,7 +132,7 @@ class BrowserManager {
     await page.evaluate(async () => {
       const scrollHeight = Math.floor(Math.random() * 300) + 100;
       window.scrollBy(0, scrollHeight);
-      await new Promise Promise(r => setTimeout(r, Math.random() * 500 + 200));
+      await new Promise(r => setTimeout(r, Math.random() * 500 + 200));
       if (Math.random() > 0.7) {
         window.scrollBy(0, -scrollHeight / 2);
       }
