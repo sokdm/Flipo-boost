@@ -6,16 +6,16 @@ echo "🚀 Starting Filpo Boost Build..."
 echo "📦 Installing root dependencies..."
 npm install
 
-# Install client deps and build
+# Install and build client
 echo "📦 Installing client dependencies..."
 cd client
 npm install
 
 echo "🔨 Building client..."
-npx vite build
+./node_modules/.bin/vite build
 cd ..
 
-# Install server deps (without Chrome download)
+# Install server deps
 echo "📦 Installing server dependencies..."
 cd server
 npm install
