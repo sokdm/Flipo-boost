@@ -11,6 +11,15 @@ const app = express();
 
 app.set('trust proxy', 1);
 
+// CORS - Allow all origins in production (fix for Render)
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+}));
+
+// Rate limiting
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
@@ -18,16 +27,22 @@ const limiter = rateLimit({
   legacyHeaders: false,
 });
 
-app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use('/api/', limiter);
 
+// Health check
 app.get('/health', (req, res) => {
   res.status(200).json({ 
     status: 'OK', 
     timestamp: new Date().toISOString(),
-    env: process.env.NODE_ENV || 'production'
+    env: process.env.NODE_ENV || 'production',
+    chrome: fs.existsSync('/opt/render/project/src/.cache/puppeteer/chrome/linux-121.0.6167.85/chrome-linux64/chrome')
   });
+});
+
+// Test API endpoint
+app.get('/api/test', (req, res) => {
+  res.json({ message: 'API is working', time: new Date().toISOString() });
 });
 
 const connectDB = async (retries = 5) => {
@@ -72,7 +87,6 @@ const installChrome = () => {
     const cacheDir = process.env.PUPPETEER_CACHE_DIR || '/opt/render/project/src/.cache/puppeteer';
     console.log('🌐 Starting Chrome installation...');
     
-    // Ensure directory exists
     try {
       fs.mkdirSync(cacheDir, { recursive: true });
     } catch (e) {}
@@ -96,7 +110,6 @@ const installChrome = () => {
     installProcess.on('close', (code) => {
       if (code === 0) {
         console.log('✅ Chrome installation completed');
-        console.log(output);
         resolve(true);
       } else {
         console.log('⚠️ Chrome installation failed with code:', code);
@@ -104,9 +117,8 @@ const installChrome = () => {
       }
     });
 
-    // Timeout after 5 minutes
     setTimeout(() => {
-      console.log('⏱️ Chrome install timeout - continuing without Chrome');
+      console.log('⏱️ Chrome install timeout - continuing');
       resolve(false);
     }, 300000);
   });
@@ -116,16 +128,15 @@ const installChrome = () => {
 const browserManager = require('./services/automation/browserManager');
 
 const startServer = async () => {
-  // Start server immediately
   const PORT = process.env.PORT || 10000;
   
-  // API Routes
+  // API Routes - MUST be before static files
   app.use('/api/auth', require('./routes/auth'));
   app.use('/api/tasks', require('./routes/tasks'));
   app.use('/api/user', require('./routes/user'));
   app.use('/api/platforms', require('./routes/platforms'));
 
-  // Serve static files
+  // Serve static files LAST
   if (process.env.NODE_ENV === 'production') {
     const clientDist = path.join(__dirname, '../client/dist');
     
@@ -133,18 +144,14 @@ const startServer = async () => {
       console.log('📁 Serving static files from:', clientDist);
       app.use(express.static(clientDist));
       
+      // This catch-all must be AFTER API routes
       app.get('*', (req, res) => {
-        const indexPath = path.join(clientDist, 'index.html');
-        if (fs.existsSync(indexPath)) {
-          res.sendFile(indexPath);
-        } else {
-          res.status(404).json({ error: 'Frontend not built' });
+        // Don't serve index.html for API routes
+        if (req.path.startsWith('/api/')) {
+          return res.status(404).json({ error: 'API endpoint not found' });
         }
-      });
-    } else {
-      console.error('❌ Client dist folder not found');
-      app.get('/', (req, res) => {
-        res.json({ error: 'Frontend not built' });
+        const indexPath = path.join(clientDist, 'index.html');
+        res.sendFile(indexPath);
       });
     }
   }
@@ -154,21 +161,20 @@ const startServer = async () => {
     res.status(500).json({ error: 'Something went wrong!', message: err.message });
   });
 
-  // Start listening
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`🔗 Health check: http://localhost:${PORT}/health`);
   });
 
-  // Install Chrome in background after server starts
+  // Install Chrome in background
   setTimeout(async () => {
     await installChrome();
     await browserManager.initialize();
     if (browserManager.isAvailable()) {
       console.log('✅ Browser automation ready');
     } else {
-      console.log('⚠️ Browser automation not available - Chrome install may have failed');
+      console.log('⚠️ Browser automation not available');
     }
   }, 1000);
 };
