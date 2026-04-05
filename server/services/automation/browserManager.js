@@ -1,19 +1,65 @@
-const puppeteer = require('puppeteer-extra');
+const puppeteer = require('puppeteer-core');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const UserAgent = require('user-agents');
 const logger = require('../../utils/logger');
 
-puppeteer.use(StealthPlugin());
+// Apply stealth plugin to puppeteer-core
+const puppeteerExtra = require('puppeteer-extra');
+puppeteerExtra.use(StealthPlugin());
 
 class BrowserManager {
   constructor() {
     this.browsers = new Map();
     this.activePages = new Map();
+    this.chromePath = null;
+  }
+
+  async findChrome() {
+    // Check common Chrome locations on Render
+    const possiblePaths = [
+      process.env.PUPPETEER_EXECUTABLE_PATH,
+      '/usr/bin/google-chrome',
+      '/usr/bin/chromium-browser',
+      '/usr/bin/chromium',
+      '/opt/google/chrome/google-chrome',
+      '/opt/render/.cache/puppeteer/chrome/linux-119.0.6045.105/chrome-linux64/chrome',
+      '/opt/render/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome'
+    ];
+
+    const fs = require('fs');
+    for (const path of possiblePaths) {
+      if (path && fs.existsSync(path)) {
+        logger.info(`Found Chrome at: ${path}`);
+        return path;
+      }
+    }
+
+    // Try to find using 'which' command
+    try {
+      const { execSync } = require('child_process');
+      const chromePath = execSync('which google-chrome || which chromium-browser || which chromium', { encoding: 'utf8' }).trim();
+      if (chromePath && fs.existsSync(chromePath)) {
+        return chromePath;
+      }
+    } catch (e) {
+      // Command failed
+    }
+
+    logger.warn('No Chrome found, automation will be disabled');
+    return null;
   }
 
   async createBrowser(taskId, proxy = null) {
     try {
-      // FREE TIER: Use puppeteer's bundled Chromium (no disk needed)
+      // Find Chrome if not already found
+      if (!this.chromePath) {
+        this.chromePath = await this.findChrome();
+      }
+
+      if (!this.chromePath) {
+        throw new Error('Chrome not found on system. Please install Chrome or use Standard tier with disk.');
+      }
+
       const args = [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -26,10 +72,8 @@ class BrowserManager {
         '--disable-web-security',
         '--disable-features=IsolateOrigins,site-per-process',
         '--disable-blink-features=AutomationControlled',
-        '--single-process', // Critical for free tier (less memory)
-        '--no-zygote',
+        '--single-process',
         '--deterministic-fetch',
-        '--disable-features=IsolateOrigins,site-per-process,SitePerProcess',
         '--disable-site-isolation-trials'
       ];
 
@@ -37,13 +81,13 @@ class BrowserManager {
         args.push(`--proxy-server=${proxy}`);
       }
 
-      logger.info(`Launching browser for task ${taskId} (Free Tier Mode)`);
+      logger.info(`Launching browser for task ${taskId}`);
 
-      const browser = await puppeteer.launch({
+      const browser = await puppeteerExtra.launch({
         headless: 'new',
+        executablePath: this.chromePath,
         args,
-        ignoreHTTPSErrors: true,
-        // No executablePath - uses bundled Chromium
+        ignoreHTTPSErrors: true
       });
 
       this.browsers.set(taskId, browser);
@@ -62,18 +106,15 @@ class BrowserManager {
 
       const page = await browser.newPage();
       
-      // FREE TIER: Minimal viewport to save memory
       await page.setViewport({
         width: 1366,
         height: 768,
         deviceScaleFactor: 1
       });
 
-      // Rotate user agents
       const userAgent = new UserAgent({ deviceCategory: 'desktop' });
       await page.setUserAgent(userAgent.toString());
 
-      // Basic stealth
       await page.evaluateOnNewDocument(() => {
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
         Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
@@ -103,7 +144,6 @@ class BrowserManager {
   }
 
   async humanLikeDelay(min = 2000, max = 5000) {
-    // FREE TIER: Slower delays to avoid detection with fewer resources
     const delay = Math.floor(Math.random() * (max - min + 1)) + min;
     await new Promise(resolve => setTimeout(resolve, delay));
   }

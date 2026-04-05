@@ -16,7 +16,7 @@
     "jsonwebtoken": "^9.0.2",
     "express-rate-limit": "^7.1.5",
     "express-validator": "^7.0.1",
-    "puppeteer": "^21.6.1",
+    "puppeteer-core": "^21.6.1",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
     "user-agents": "^1.1.140",
