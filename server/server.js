@@ -47,22 +47,31 @@ const connectDB = async (retries = 5) => {
   }
 };
 
-// Install Chrome if not present (for first run on Standard tier)
+// Install Chrome if disk is available
 const installChrome = async () => {
   const cacheDir = '/opt/render/.cache/puppeteer';
-  if (!fs.existsSync(cacheDir)) {
-    fs.mkdirSync(cacheDir, { recursive: true });
+  
+  // Check if disk is mounted
+  if (!fs.existsSync('/opt/render/.cache')) {
+    console.log('⚠️ Disk not mounted at /opt/render/.cache - Chrome cannot be installed');
+    return false;
   }
   
   try {
+    if (!fs.existsSync(cacheDir)) {
+      fs.mkdirSync(cacheDir, { recursive: true });
+    }
+    
     console.log('🌐 Installing Chrome for Puppeteer...');
     execSync('cd server && npx puppeteer browsers install chrome', { 
       stdio: 'inherit',
       timeout: 120000 
     });
     console.log('✅ Chrome installed successfully');
+    return true;
   } catch (error) {
-    console.log('⚠️ Chrome install failed (may already exist or disk not ready):', error.message);
+    console.log('⚠️ Chrome install failed:', error.message);
+    return false;
   }
 };
 
@@ -70,15 +79,15 @@ const installChrome = async () => {
 const browserManager = require('./services/automation/browserManager');
 
 const startServer = async () => {
-  // Try to install Chrome on startup (Standard tier only)
-  await installChrome();
+  // Check disk and install Chrome
+  const chromeInstalled = await installChrome();
   
   // Initialize browser manager
   await browserManager.initialize();
   if (browserManager.isAvailable()) {
     console.log('✅ Browser automation ready');
   } else {
-    console.log('⚠️ Browser automation not available - check disk mount');
+    console.log('⚠️ Browser automation not available');
   }
 
   // API Routes
