@@ -3,7 +3,6 @@ const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const UserAgent = require('user-agents');
 const logger = require('../../utils/logger');
 
-// Apply stealth plugin
 const puppeteerExtra = require('puppeteer-extra');
 puppeteerExtra.use(StealthPlugin());
 
@@ -21,27 +20,50 @@ class BrowserManager {
     if (this.chromeAvailable) {
       logger.info(`✅ Chrome found at: ${this.chromePath}`);
     } else {
-      logger.warn('⚠️ Chrome not found - automation tasks will fail');
+      logger.warn('⚠️ Chrome not found');
     }
   }
 
   async findChrome() {
+    // Check Render disk path first
     const possiblePaths = [
+      '/opt/render/.cache/puppeteer/chrome/linux-119.0.6045.105/chrome-linux64/chrome',
+      '/opt/render/.cache/puppeteer/chrome/linux-121.0.6167.85/chrome-linux64/chrome',
+      '/opt/render/.cache/puppeteer/chrome/linux-122.0.6261.94/chrome-linux64/chrome',
+      '/opt/render/.cache/puppeteer/chrome/linux-123.0.6312.86/chrome-linux64/chrome',
+      '/opt/render/.cache/puppeteer/chrome/linux-124.0.6367.60/chrome-linux64/chrome',
       process.env.PUPPETEER_EXECUTABLE_PATH,
       '/usr/bin/google-chrome',
       '/usr/bin/chromium-browser',
       '/usr/bin/chromium',
-      '/opt/google/chrome/google-chrome',
-      '/usr/lib/chromium/chromium',
-      '/snap/bin/chromium',
-      '/usr/lib/chromium-browser/chromium-browser'
+      '/opt/google/chrome/google-chrome'
     ];
 
     const fs = require('fs');
+    
+    // Try exact paths first
     for (const path of possiblePaths) {
       if (path && fs.existsSync(path)) {
+        logger.info(`Found Chrome at: ${path}`);
         return path;
       }
+    }
+
+    // Try to find in puppeteer cache directory (wildcard)
+    try {
+      const cacheDir = '/opt/render/.cache/puppeteer/chrome';
+      if (fs.existsSync(cacheDir)) {
+        const dirs = fs.readdirSync(cacheDir);
+        for (const dir of dirs) {
+          const chromePath = `${cacheDir}/${dir}/chrome-linux64/chrome`;
+          if (fs.existsSync(chromePath)) {
+            logger.info(`Found Chrome in cache: ${chromePath}`);
+            return chromePath;
+          }
+        }
+      }
+    } catch (e) {
+      // Ignore
     }
 
     // Try which command
@@ -64,7 +86,7 @@ class BrowserManager {
 
   async createBrowser(taskId, proxy = null) {
     if (!this.chromeAvailable) {
-      throw new Error('Chrome not available on this system. Free tier does not support browser automation.');
+      throw new Error('Chrome not available. Run "npx puppeteer browsers install chrome" or check disk mount.');
     }
 
     try {
