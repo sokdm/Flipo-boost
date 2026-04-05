@@ -58,7 +58,7 @@ class BrowserManager {
     }
 
     try {
-      // EXTREME stealth args
+      // Headless mode with stealth
       const args = [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -71,11 +71,9 @@ class BrowserManager {
         '--disable-web-security',
         '--disable-features=IsolateOrigins,site-per-process',
         '--disable-blink-features=AutomationControlled',
-        '--disable-blink-features=AutomationControlled',
         '--disable-infobars',
         '--window-size=1920,1080',
         '--start-maximized',
-        '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
         '--disable-background-networking',
         '--disable-background-timer-throttling',
         '--disable-backgrounding-occluded-windows',
@@ -90,9 +88,10 @@ class BrowserManager {
         '--disable-renderer-backgrounding',
         '--force-color-profile=srgb',
         '--metrics-recording-only',
-        '--enable-automation',
         '--password-store=basic',
-        '--use-mock-keychain'
+        '--use-mock-keychain',
+        '--single-process',
+        '--no-zygote'
       ];
 
       if (proxy) {
@@ -102,7 +101,7 @@ class BrowserManager {
       console.log(`Launching browser for task ${taskId}`);
 
       const browser = await puppeteerExtra.launch({
-        headless: false, // NEW: Use headed mode for more stealth
+        headless: 'new', // Back to headless
         executablePath: this.chromePath,
         args,
         ignoreHTTPSErrors: true,
@@ -127,24 +126,28 @@ class BrowserManager {
 
       const page = await browser.newPage();
       
-      // Mobile viewport (more trusted)
+      // Desktop viewport (more reliable than mobile in headless)
       await page.setViewport({
-        width: 375 + Math.floor(Math.random() * 100),
-        height: 812 + Math.floor(Math.random() * 100),
-        deviceScaleFactor: 2,
-        isMobile: true,
-        hasTouch: true
+        width: 1366 + Math.floor(Math.random() * 200),
+        height: 768 + Math.floor(Math.random() * 200),
+        deviceScaleFactor: 1
       });
 
-      // iPhone user agent
-      await page.setUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1');
+      // Realistic user agent
+      const userAgents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'
+      ];
+      const userAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
+      
+      await page.setUserAgent(userAgent);
 
       // Override navigator
       await page.evaluateOnNewDocument(() => {
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
         Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
         Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-        Object.defineProperty(navigator, 'platform', { get: () => 'iPhone' });
         window.chrome = { runtime: {} };
         window.navigator.chrome = { runtime: {} };
       });
@@ -170,8 +173,8 @@ class BrowserManager {
     }
   }
 
-  // MUCH longer delays to appear human
-  async humanLikeDelay(min = 8000, max = 15000) {
+  // Long delays
+  async humanLikeDelay(min = 5000, max = 10000) {
     const delay = Math.floor(Math.random() * (max - min + 1)) + min;
     console.log(`Waiting ${delay}ms...`);
     await new Promise(resolve => setTimeout(resolve, delay));
@@ -179,20 +182,12 @@ class BrowserManager {
 
   async humanLikeScroll(page) {
     await page.evaluate(async () => {
-      const scrolls = Math.floor(Math.random() * 3) + 2;
+      const scrolls = Math.floor(Math.random() * 3) + 1;
       for (let i = 0; i < scrolls; i++) {
-        window.scrollBy(0, Math.floor(Math.random() * 400) + 100);
-        await new Promise(r => setTimeout(r, Math.random() * 2000 + 1000));
+        window.scrollBy(0, Math.floor(Math.random() * 300) + 100);
+        await new Promise(r => setTimeout(r, Math.random() * 1000 + 500));
       }
     });
-  }
-
-  async humanLikeMouseMove(page) {
-    await page.mouse.move(
-      Math.floor(Math.random() * 300) + 50,
-      Math.floor(Math.random() * 600) + 100,
-      { steps: 5 }
-    );
   }
 }
 
