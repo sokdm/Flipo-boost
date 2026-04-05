@@ -10,7 +10,6 @@ const Register = () => {
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [agreed, setAgreed] = useState(false)
- = useState(false)
   const { register } = useAuth()
   const navigate = useNavigate()
 
