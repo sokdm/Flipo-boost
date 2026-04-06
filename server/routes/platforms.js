@@ -10,7 +10,7 @@ router.get('/', (req, res) => {
     color: platforms[key].color,
     services: platforms[key].services
   }));
-  
+
   res.json(platformList);
 });
 

@@ -1,7 +1,5 @@
 const browserManager = require('./browserManager');
-const platformActions = require('./platformActions');
-const Task = require('../../models/Task');
-const logger = require('../../utils/logger');
+const Task = require('../models/Task');
 
 class TaskExecutor {
   constructor() {
@@ -13,30 +11,31 @@ class TaskExecutor {
     if (!this.initialized) {
       await browserManager.initialize();
       this.initialized = true;
+      console.log('TaskExecutor initialized');
     }
   }
 
   async executeTask(taskId) {
+    let task = null;
+    
     try {
       await this.initialize();
 
-      // Check if Chrome is available
       if (!browserManager.isAvailable()) {
-        const task = await Task.findById(taskId);
+        task = await Task.findById(taskId);
         if (task) {
           task.status = 'failed';
           task.logs.push({
-            message: 'Browser automation not available on free tier. Please upgrade to Standard tier ($7/month) for full automation features.',
+            message: 'Browser automation not available - Chrome not found',
             type: 'error',
             timestamp: new Date()
           });
           await task.save();
         }
-        logger.error('Chrome not available - cannot execute automation task');
         return;
       }
 
-      const task = await Task.findById(taskId);
+      task = await Task.findById(taskId);
       if (!task) {
         throw new Error('Task not found');
       }
@@ -45,105 +44,235 @@ class TaskExecutor {
         throw new Error('Task already running');
       }
 
-      this.runningTasks.set(taskId, { startTime: Date.now(), shouldStop: false });
+      // Initialize task state
+      const taskState = {
+        startTime: Date.now(),
+        shouldStop: false,
+        consecutiveErrors: 0,
+        successfulActions: 0,
+        lastSuccessTime: null,
+        proxyFailures: 0
+      };
+      
+      this.runningTasks.set(taskId, taskState);
       
       task.status = 'running';
       task.startedAt = new Date();
       task.logs.push({
-        message: 'Task started',
+        message: 'Task started with anti-detection measures',
         type: 'info',
         timestamp: new Date()
       });
       await task.save();
 
-      const proxy = task.settings.proxyEnabled ? this.getRandomProxy() : null;
-      const browser = await browserManager.createBrowser(taskId, proxy);
-      const page = await browserManager.createPage(taskId, task.platform);
-
-      let completedCount = 0;
+      let completedCount = task.completed || 0;
       const targetCount = task.quantity;
+      const maxConsecutiveErrors = 3;
+      const maxProxyFailures = 5;
 
-      while (completedCount < targetCount && !this.runningTasks.get(taskId)?.shouldStop) {
+      // Main execution loop
+      while (completedCount < targetCount && !taskState.shouldStop) {
+        let browser = null;
+        let proxyConfig = null;
+        
         try {
-          await platformActions.navigateToPage(page, task.targetUrl, taskId);
+          // Check failure thresholds
+          if (taskState.consecutiveErrors >= maxConsecutiveErrors) {
+            throw new Error(`Stopped after ${maxConsecutiveErrors} consecutive errors - likely blocked or detected`);
+          }
           
-          let actionSuccess = false;
+          if (taskState.proxyFailures >= maxProxyFailures) {
+            throw new Error(`Stopped after ${maxProxyFailures} proxy failures`);
+          }
+
+          // Get fresh proxy for every action (IP rotation)
+          proxyConfig = browserManager.getRandomProxy();
+          
+          task.logs.push({
+            message: `Action ${completedCount + 1}/${targetCount} - Using ${proxyConfig?.server ? 'proxy' : 'direct connection'}`,
+            type: 'info',
+            timestamp: new Date()
+          });
+          await task.save();
+
+          // Create fresh browser instance
+          browser = await browserManager.createBrowser(taskId, proxyConfig);
+          const page = await browserManager.createPage(taskId, task.platform, proxyConfig);
+
+          // Navigate with retry
+          let navigateSuccess = false;
+          let navAttempts = 0;
+          const maxNavAttempts = 2;
+          
+          while (!navigateSuccess && navAttempts < maxNavAttempts) {
+            try {
+              await page.goto(task.targetUrl, {
+                waitUntil: 'networkidle2',
+                timeout: 30000
+              });
+              navigateSuccess = true;
+            } catch (navError) {
+              navAttempts++;
+              if (navAttempts >= maxNavAttempts) throw navError;
+              task.logs.push({
+                message: `Navigation retry ${navAttempts}/${maxNavAttempts}`,
+                type: 'warning',
+                timestamp: new Date()
+              });
+              await browserManager.humanLikeDelay(3000, 5000);
+            }
+          }
+
+          // Perform the specific service action
+          let actionResult = { success: false, details: 'Not executed' };
           
           switch (task.service) {
             case 'followers':
-              actionSuccess = await platformActions.performFollow(page, task.platform, taskId);
-              break;
-            case 'likes':
-              actionSuccess = await platformActions.performLike(page, task.platform, taskId);
-              break;
-            case 'comments':
-              const commentResult = await platformActions.performComment(page, task.platform, taskId);
-              actionSuccess = commentResult.success;
-              break;
-            case 'views':
-              actionSuccess = await platformActions.performView(page, task.platform, taskId);
-              break;
             case 'subscribers':
-              actionSuccess = await platformActions.performFollow(page, task.platform, taskId);
+              actionResult = await browserManager.performFollow(page, task.targetUrl, task.platform);
               break;
+              
+            case 'likes':
+              actionResult = await browserManager.performLike(page, task.targetUrl, task.platform);
+              break;
+              
+            case 'comments':
+              // Get comment text from settings or use default
+              const commentText = task.settings?.commentText || 'Great content! 🔥';
+              actionResult = await browserManager.performComment(page, task.targetUrl, task.platform, commentText);
+              break;
+              
+            case 'views':
+              const viewDuration = task.settings?.viewDuration || 15000;
+              actionResult = await browserManager.performView(page, task.targetUrl, task.platform, viewDuration);
+              break;
+              
             case 'shares':
-              actionSuccess = await platformActions.performLike(page, task.platform, taskId);
+              // Shares often require different logic - using like as fallback or implement specific share logic
+              actionResult = await browserManager.performLike(page, task.targetUrl, task.platform);
+              if (actionResult.success) {
+                actionResult.details = 'Share action simulated (using like as proxy)';
+              }
               break;
+              
             default:
-              throw new Error(`Unknown service: ${task.service}`);
+              throw new Error(`Unknown service type: ${task.service}`);
           }
 
-          if (actionSuccess) {
+          // Wait for API calls to complete before closing browser
+          await browserManager.humanLikeDelay(6000, 10000);
+
+          // Process result
+          if (actionResult.success) {
             completedCount++;
             task.completed = completedCount;
             task.progress = Math.floor((completedCount / targetCount) * 100);
+            
+            // Reset error counters on success
+            taskState.consecutiveErrors = 0;
+            taskState.successfulActions++;
+            taskState.lastSuccessTime = Date.now();
+            
             task.logs.push({
-              message: `Successfully completed action ${completedCount}/${targetCount}`,
+              message: `✓ ${task.service} action ${completedCount}/${targetCount} successful - ${actionResult.details}`,
               type: 'success',
               timestamp: new Date()
             });
-          }
-
-          const delayBase = task.settings.speed === 'fast' ? 3000 : 
-                           task.settings.speed === 'slow' ? 15000 : 8000;
-          const delayVariation = Math.random() * 5000;
-          await browserManager.humanLikeDelay(delayBase, delayBase + delayVariation);
-
-          if (Math.random() > 0.5) {
-            await browserManager.humanLikeScroll(page);
+          } else {
+            // Action failed
+            taskState.consecutiveErrors++;
+            
+            if (actionResult.possibleBlock) {
+              taskState.proxyFailures++;
+              task.logs.push({
+                message: `⚠ Possible detection/block: ${actionResult.error}. Rotating proxy...`,
+                type: 'warning',
+                timestamp: new Date()
+              });
+            } else {
+              task.logs.push({
+                message: `✗ Action failed: ${actionResult.error || actionResult.details}`,
+                type: 'error',
+                timestamp: new Date()
+              });
+            }
           }
 
           await task.save();
 
+          // Calculate dynamic delay
+          const baseDelay = task.settings?.speed === 'fast' ? 10000 : 
+                           task.settings?.speed === 'slow' ? 30000 : 20000;
+          
+          // Increase delay if errors are occurring
+          const errorMultiplier = Math.min(taskState.consecutiveErrors, 3);
+          const errorDelay = errorMultiplier * 5000;
+          const randomVariation = Math.floor(Math.random() * 5000);
+          const totalDelay = baseDelay + errorDelay + randomVariation;
+          
+          if (errorMultiplier > 0) {
+            task.logs.push({
+              message: `Adding ${errorDelay/1000}s delay due to recent errors`,
+              type: 'info',
+              timestamp: new Date()
+            });
+            await task.save();
+          }
+          
+          await browserManager.humanLikeDelay(totalDelay, totalDelay + 3000);
+
         } catch (actionError) {
-          logger.error(`Action failed for task ${taskId}:`, actionError);
+          console.error(`[${taskId}] Action error:`, actionError);
+          
+          const currentState = this.runningTasks.get(taskId);
+          if (currentState) {
+            currentState.consecutiveErrors++;
+          }
+          
           task.logs.push({
-            message: `Action failed: ${actionError.message}`,
+            message: `Error: ${actionError.message}`,
             type: 'error',
             timestamp: new Date()
           });
-          
-          if (task.logs.filter(l => l.type === 'error').length > 5) {
-            throw new Error('Too many consecutive errors');
-          }
-          
-          await browserManager.humanLikeDelay(5000, 10000);
           await task.save();
+          
+          // Long delay after error
+          await browserManager.humanLikeDelay(15000, 25000);
+          
+        } finally {
+          // Always close browser to ensure fresh IP next iteration
+          if (browser) {
+            try {
+              await browserManager.closeBrowser(taskId);
+            } catch (closeError) {
+              console.error(`[${taskId}] Error closing browser:`, closeError);
+            }
+          }
         }
       }
 
-      task.status = this.runningTasks.get(taskId)?.shouldStop ? 'paused' : 'completed';
+      // Task completion
+      const finalState = this.runningTasks.get(taskId);
+      const finalStatus = finalState?.shouldStop ? 'paused' : 'completed';
+      
+      task.status = finalStatus;
       task.completedAt = new Date();
+      
+      const totalAttempts = (finalState?.successfulActions || 0) + (finalState?.consecutiveErrors || 0);
+      const successRate = totalAttempts > 0 
+        ? Math.round(((finalState?.successfulActions || 0) / totalAttempts) * 100) 
+        : 0;
+      
       task.logs.push({
-        message: `Task ${task.status} with ${completedCount} actions completed`,
+        message: `Task ${finalStatus}. Completed ${completedCount}/${targetCount} actions. Success rate: ${successRate}%`,
         type: 'info',
         timestamp: new Date()
       });
       await task.save();
 
     } catch (error) {
-      logger.error(`Task execution failed for ${taskId}:`, error);
-      const task = await Task.findById(taskId);
+      console.error(`[${taskId}] Task execution failed:`, error);
+      
       if (task) {
         task.status = 'failed';
         task.logs.push({
@@ -154,7 +283,12 @@ class TaskExecutor {
         await task.save();
       }
     } finally {
-      await browserManager.closeBrowser(taskId);
+      // Cleanup
+      try {
+        await browserManager.closeBrowser(taskId);
+      } catch (e) {
+        console.error(`[${taskId}] Cleanup error:`, e);
+      }
       this.runningTasks.delete(taskId);
     }
   }
@@ -163,19 +297,18 @@ class TaskExecutor {
     const task = this.runningTasks.get(taskId);
     if (task) {
       task.shouldStop = true;
+      console.log(`[${taskId}] Stop requested`);
       return true;
     }
     return false;
   }
 
-  getRandomProxy() {
-    const proxyList = process.env.PROXY_LIST ? process.env.PROXY_LIST.split(',') : [];
-    if (proxyList.length === 0) return null;
-    return proxyList[Math.floor(Math.random() * proxyList.length)];
-  }
-
   getRunningTasks() {
     return Array.from(this.runningTasks.keys());
+  }
+
+  getTaskStatus(taskId) {
+    return this.runningTasks.get(taskId);
   }
 }
 
