@@ -50,6 +50,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/tasks', require('./routes/tasks'));
 app.use('/api/user', require('./routes/user'));
 app.use('/api/platforms', require('./routes/platforms'));
+app.use('/api/bots', require('./routes/bots')); // <-- ADDED BOT ROUTES
 
 // Static files
 const clientDist = path.join(__dirname, '../client/dist');

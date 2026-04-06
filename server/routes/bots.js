@@ -1,21 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const BotAccount = require('../models/BotAccount');
-const botPoolManager = require('../services/automation/botPoolManager');
-const { auth, adminAuth } = require('../middleware/auth');
 
-// Get bot pool stats (admin only)
-router.get('/stats', adminAuth, async (req, res) => {
-  try {
-    const stats = await botPoolManager.getPoolStats();
-    res.json(stats);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Add new bot account (admin only)
-router.post('/add', adminAuth, async (req, res) => {
+// Add bot account
+router.post('/add', async (req, res) => {
   try {
     const { platform, username, password, email } = req.body;
     
@@ -23,15 +11,39 @@ router.post('/add', adminAuth, async (req, res) => {
       return res.status(400).json({ error: 'Platform, username, and password required' });
     }
 
-    const bot = await botPoolManager.addBot(platform, username, password, email);
-    res.json({ success: true, bot });
+    // Check if bot already exists
+    const existing = await BotAccount.findOne({ platform, username });
+    if (existing) {
+      return res.status(400).json({ error: 'Bot already exists' });
+    }
+
+    const bot = new BotAccount({
+      platform,
+      username,
+      password,
+      email,
+      status: 'active'
+    });
+
+    await bot.save();
+    
+    res.json({ 
+      success: true, 
+      message: 'Bot added to pool',
+      bot: {
+        id: bot._id,
+        platform: bot.platform,
+        username: bot.username,
+        status: bot.status
+      }
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// List all bots (admin only)
-router.get('/list', adminAuth, async (req, res) => {
+// List all bots
+router.get('/list', async (req, res) => {
   try {
     const bots = await BotAccount.find().select('-password').sort({ createdAt: -1 });
     res.json(bots);
@@ -40,15 +52,42 @@ router.get('/list', adminAuth, async (req, res) => {
   }
 });
 
-// Reset bot status (admin only)
-router.post('/reset/:botId', adminAuth, async (req, res) => {
+// Get pool stats
+router.get('/stats', async (req, res) => {
+  try {
+    const stats = await BotAccount.aggregate([
+      {
+        $group: {
+          _id: { platform: '$platform', status: '$status' },
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+    
+    // Format stats
+    const formatted = {};
+    stats.forEach(stat => {
+      if (!formatted[stat._id.platform]) {
+        formatted[stat._id.platform] = {};
+      }
+      formatted[stat._id.platform][stat._id.status] = stat.count;
+    });
+    
+    res.json(formatted);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Reset bot status
+router.post('/reset/:botId', async (req, res) => {
   try {
     const bot = await BotAccount.findByIdAndUpdate(req.params.botId, {
       status: 'active',
       errorCount: 0,
       lastError: null,
       dailyActions: {}
-    }, { new: true });
+    }, { new: true }).select('-password');
     
     res.json({ success: true, bot });
   } catch (error) {
@@ -56,11 +95,11 @@ router.post('/reset/:botId', adminAuth, async (req, res) => {
   }
 });
 
-// Delete bot (admin only)
-router.delete('/:botId', adminAuth, async (req, res) => {
+// Delete bot
+router.delete('/:botId', async (req, res) => {
   try {
     await BotAccount.findByIdAndDelete(req.params.botId);
-    res.json({ success: true });
+    res.json({ success: true, message: 'Bot deleted' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
