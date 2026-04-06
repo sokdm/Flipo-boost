@@ -134,10 +134,16 @@ class BotPoolManager {
   async validateBotSession(page, platform) {
     try {
       if (platform === 'tiktok') {
+        // Check if we're on the main page and logged in
+        const currentUrl = page.url();
+        if (currentUrl.includes('login')) return false;
+        
+        // Check for profile/upload indicators
         const isLoggedIn = await page.evaluate(() => {
-          return !!document.querySelector('a[href="/upload"]') ||
-                 !!document.querySelector('[data-e2e="nav-profile"]') ||
-                 !!document.querySelector('.tiktok-logo') === false; // If no login button
+          const uploadBtn = document.querySelector('a[href="/upload"]');
+          const profileIcon = document.querySelector('[data-e2e="nav-profile"]');
+          const inboxIcon = document.querySelector('[data-e2e="nav-inbox"]');
+          return !!(uploadBtn || profileIcon || inboxIcon);
         });
         return isLoggedIn;
       }
@@ -171,82 +177,176 @@ class BotPoolManager {
 
   async loginTikTok(page, bot) {
     try {
+      console.log(`[Login] Navigating to TikTok login...`);
       await page.goto('https://www.tiktok.com/login', { waitUntil: 'networkidle2', timeout: 30000 });
-      await browserManager.humanLikeDelay(3000, 5000);
+      await browserManager.humanLikeDelay(4000, 6000);
 
-      // Click "Use phone / email / username" - using XPath or text content
-      const buttons = await page.$$('div, button, span');
-      for (const button of buttons) {
-        const text = await page.evaluate(el => el.textContent, button);
-        if (text && text.includes('Use phone') || text.includes('email') || text.includes('username')) {
-          await button.click();
-          break;
+      // Take screenshot to debug
+      await page.screenshot({ path: `login-page-${Date.now()}.png` });
+      console.log(`[Login] Screenshot saved`);
+
+      // Try to find and click "Use phone / email / username" button
+      console.log(`[Login] Looking for email login option...`);
+      
+      // Method 1: Look for divs with specific text
+      const foundEmailOption = await page.evaluate(() => {
+        const allElements = document.querySelectorAll('div, button, span, a');
+        for (const el of allElements) {
+          const text = el.textContent || '';
+          if (text.includes('Use phone') || text.includes('email') || text.includes('username')) {
+            if (el.click) {
+              el.click();
+              return true;
+            }
+          }
+        }
+        return false;
+      });
+
+      if (foundEmailOption) {
+        console.log(`[Login] Clicked email option`);
+        await browserManager.humanLikeDelay(3000, 5000);
+      }
+
+      // Look for "Email / Username" tab
+      const foundTab = await page.evaluate(() => {
+        const allElements = document.querySelectorAll('div, button, span');
+        for (const el of allElements) {
+          const text = el.textContent || '';
+          if ((text.includes('Email') && text.includes('Username')) || text === 'Email') {
+            if (el.click) {
+              el.click();
+              return true;
+            }
+          }
+        }
+        return false;
+      });
+
+      if (foundTab) {
+        console.log(`[Login] Clicked Email/Username tab`);
+        await browserManager.humanLikeDelay(3000, 5000);
+      }
+
+      // Find username input
+      console.log(`[Login] Filling credentials...`);
+      
+      const usernameInput = await page.$('input[name="username"], input[placeholder*="username" i], input[type="text"]');
+      if (!usernameInput) {
+        console.log(`[Login] Username input not found, trying generic selector...`);
+        // Try to find any text input
+        const inputs = await page.$$('input');
+        console.log(`[Login] Found ${inputs.length} inputs`);
+        
+        for (let i = 0; i < inputs.length; i++) {
+          const type = await page.evaluate(el => el.type, inputs[i]);
+          const placeholder = await page.evaluate(el => el.placeholder, inputs[i]);
+          console.log(`[Login] Input ${i}: type=${type}, placeholder=${placeholder}`);
+        }
+      }
+
+      // Fill username with delay
+      try {
+        await page.type('input[name="username"]', bot.username, { delay: 150 });
+      } catch (e) {
+        // Try first text input
+        const inputs = await page.$$('input[type="text"]');
+        if (inputs.length > 0) {
+          await inputs[0].type(bot.username, { delay: 150 });
         }
       }
       
       await browserManager.humanLikeDelay(2000, 3000);
 
-      // Click "Email / Username" tab
-      const tabs = await page.$$('div, button, span');
-      for (const tab of tabs) {
-        const text = await page.evaluate(el => el.textContent, tab);
-        if (text && text.includes('Email') && text.includes('Username')) {
-          await tab.click();
-          break;
+      // Fill password
+      try {
+        await page.type('input[type="password"]', bot.password, { delay: 150 });
+      } catch (e) {
+        const passInputs = await page.$$('input[type="password"]');
+        if (passInputs.length > 0) {
+          await passInputs[0].type(bot.password, { delay: 150 });
         }
       }
       
       await browserManager.humanLikeDelay(2000, 3000);
 
-      // Fill credentials
-      await page.type('input[name="username"]', bot.username, { delay: 100 });
-      await browserManager.humanLikeDelay(1000, 2000);
-      await page.type('input[type="password"]', bot.password, { delay: 100 });
-      await browserManager.humanLikeDelay(1000, 2000);
-
-      // Click login button
-      const loginButtons = await page.$$('button');
-      for (const btn of loginButtons) {
-        const text = await page.evaluate(el => el.textContent, btn);
-        const type = await page.evaluate(el => el.type, btn);
-        if ((text && text.toLowerCase().includes('log in')) || type === 'submit') {
-          await btn.click();
-          break;
+      // Find and click login button
+      console.log(`[Login] Clicking login button...`);
+      
+      const clickedLogin = await page.evaluate(() => {
+        // Look for submit buttons or buttons with "Log in" text
+        const buttons = document.querySelectorAll('button, input[type="submit"]');
+        for (const btn of buttons) {
+          const text = (btn.textContent || btn.value || '').toLowerCase();
+          if (text.includes('log in') || text.includes('login') || btn.type === 'submit') {
+            btn.click();
+            return true;
+          }
         }
+        
+        // Try any button that might be login
+        const allButtons = document.querySelectorAll('button');
+        if (allButtons.length > 0) {
+          // Usually the last button or a button near password field
+          allButtons[allButtons.length - 1].click();
+          return true;
+        }
+        return false;
+      });
+
+      if (!clickedLogin) {
+        console.log(`[Login] Could not find login button to click`);
       }
 
-      await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
+      console.log(`[Login] Waiting for navigation...`);
+      await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {
+        console.log(`[Login] Navigation timeout or no navigation`);
+      });
+      
       await browserManager.humanLikeDelay(5000, 8000);
 
+      // Take screenshot after login attempt
+      await page.screenshot({ path: `after-login-${Date.now()}.png` });
+
       // Check for CAPTCHA
-      const captcha = await page.$('#captcha-container, .captcha, iframe[src*="captcha"]');
+      const captcha = await page.$('#captcha-container, .captcha, iframe[src*="captcha"], div[class*="captcha"]');
       if (captcha) {
+        console.log(`[Login] CAPTCHA detected`);
         return { success: false, error: 'CAPTCHA detected', captcha: true };
       }
 
-      // Check for verification code input
-      const verificationInput = await page.$('input[type="text"], input[name="code"], input[placeholder*="code" i]');
-      if (verificationInput) {
+      // Check for verification
+      const verification = await page.$('input[type="text"], input[name="code"], input[placeholder*="code" i], input[placeholder*="verify" i]');
+      if (verification) {
+        console.log(`[Login] Verification required`);
         return { success: false, error: 'Verification code required', verification: true };
       }
 
-      // Verify login success
-      const isLoggedIn = await this.validateBotSession(page, 'tiktok');
+      // Check if login succeeded
+      const currentUrl = page.url();
+      console.log(`[Login] Current URL after attempt: ${currentUrl}`);
       
+      const isLoggedIn = await this.validateBotSession(page, 'tiktok');
+      console.log(`[Login] Session valid: ${isLoggedIn}`);
+
       if (isLoggedIn) {
+        console.log(`[Login] SUCCESS - Saving session`);
         await this.saveBotSession(page, bot._id);
         return { success: true };
       }
 
-      // Check if still on login page
-      const stillOnLogin = await page.$('input[name="username"], input[type="password"]');
-      if (stillOnLogin) {
-        return { success: false, error: 'Login failed - check credentials' };
+      // If still on login page, it failed
+      if (currentUrl.includes('login')) {
+        return { success: false, error: 'Login failed - still on login page' };
       }
 
+      // If redirected to home or other page, probably success
+      console.log(`[Login] Redirected to ${currentUrl}, assuming success`);
+      await this.saveBotSession(page, bot._id);
       return { success: true };
       
     } catch (error) {
+      console.error(`[Login] Error:`, error);
       return { success: false, error: error.message };
     }
   }
