@@ -2,7 +2,6 @@ const puppeteer = require('puppeteer-core');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const puppeteerExtra = require('puppeteer-extra');
 
-// Configure stealth plugin
 const stealth = StealthPlugin();
 stealth.enabledEvasions.delete('chrome.runtime');
 stealth.enabledEvasions.delete('navigator.plugins');
@@ -15,15 +14,12 @@ class BrowserManager {
     this.chromePath = null;
     this.chromeAvailable = false;
     this.proxyList = [];
-    // Store sessions for logged-in accounts
-    this.sessions = new Map();
   }
 
   async initialize() {
     this.chromePath = await this.findChrome();
     this.chromeAvailable = !!this.chromePath;
     
-    // Load proxies from environment
     this.proxyList = [
       process.env.PROXY_1,
       process.env.PROXY_2,
@@ -37,8 +33,6 @@ class BrowserManager {
 
   async findChrome() {
     const fs = require('fs');
-    const path = require('path');
-    
     const possiblePaths = [
       '/opt/render/project/src/.cache/puppeteer/chrome/linux-121.0.6167.85/chrome-linux64/chrome',
       '/usr/bin/google-chrome',
@@ -263,460 +257,6 @@ class BrowserManager {
     }
   }
 
-  async humanLikeMouseMove(page, selector) {
-    try {
-      const element = await page.$(selector);
-      if (!element) return false;
-      
-      const box = await element.boundingBox();
-      if (!box) return false;
-      
-      const x = box.x + box.width / 2 + (Math.random() * 20 - 10);
-      const y = box.y + box.height / 2 + (Math.random() * 20 - 10);
-      
-      await page.mouse.move(x, y, { steps: 10 + Math.floor(Math.random() * 10) });
-      await this.humanLikeDelay(500, 1500);
-      return true;
-    } catch (error) {
-      console.log('Mouse move error:', error.message);
-      return false;
-    }
-  }
-
-  // ==========================================
-  // TIKTOK SPECIFIC ACTIONS
-  // ==========================================
-  
-  async performTikTokFollow(page, profileUrl) {
-    const logs = [];
-    
-    try {
-      logs.push(`Navigating to: ${profileUrl}`);
-      await page.goto(profileUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-      await this.humanLikeDelay(4000, 6000);
-      
-      // Check if login required
-      const loginPrompt = await page.$('div[data-e2e="login-popup"], .login-mask, div:has-text("Log in to follow")');
-      if (loginPrompt) {
-        logs.push('Login required to follow on TikTok');
-        return { 
-          success: false, 
-          requiresLogin: true,
-          error: 'TikTok requires login to follow users',
-          logs 
-        };
-      }
-
-      // TikTok follow button selectors
-      const followSelectors = [
-        'button[data-e2e="follow-button"]',
-        'button:has-text("Follow")',
-        'div[data-e2e="follow-button"]',
-        'button[type="button"]:has(div:has-text("Follow"))',
-        'div:has-text("Follow"):not(:has-text("Following"))'
-      ];
-      
-      let followBtn = null;
-      let usedSelector = null;
-      
-      for (const selector of followSelectors) {
-        try {
-          const btn = await page.waitForSelector(selector, { visible: true, timeout: 3000 });
-          if (btn) {
-            const text = await page.evaluate(el => el.textContent || el.getAttribute('aria-label'), btn);
-            if (text && text.toLowerCase().includes('follow') && !text.toLowerCase().includes('following')) {
-              followBtn = btn;
-              usedSelector = selector;
-              break;
-            }
-          }
-        } catch (e) {}
-      }
-      
-      if (!followBtn) {
-        // Check if already following
-        const followingSelectors = [
-          'button:has-text("Following")',
-          'button:has-text("Unfollow")',
-          'div[data-e2e="following-button"]'
-        ];
-        
-        for (const selector of followingSelectors) {
-          const btn = await page.$(selector);
-          if (btn) {
-            return { 
-              success: true, 
-              alreadyFollowing: true,
-              details: 'Already following this user',
-              logs 
-            };
-          }
-        }
-        
-        logs.push('Follow button not found');
-        return { success: false, error: 'Follow button not found', logs };
-      }
-      
-      logs.push(`Found follow button: ${usedSelector}`);
-      
-      // Scroll and click
-      await page.evaluate((sel) => {
-        const btn = document.querySelector(sel);
-        if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }, usedSelector);
-      
-      await this.humanLikeDelay(1000, 2000);
-      await this.humanLikeMouseMove(page, usedSelector);
-      
-      // Native JS click
-      const clickResult = await page.evaluate((selectors) => {
-        for (const sel of selectors) {
-          const btn = document.querySelector(sel);
-          if (btn) {
-            const text = (btn.textContent || '').toLowerCase();
-            if (text.includes('follow') && !text.includes('following')) {
-              btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              
-              // Multiple click methods
-              try { 
-                btn.click(); 
-                btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-                btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-                btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-              } catch (e) {}
-              
-              return { clicked: true, text: btn.textContent };
-            }
-          }
-        }
-        return { clicked: false };
-      }, followSelectors);
-      
-      logs.push(`Click result: ${JSON.stringify(clickResult)}`);
-      
-      if (!clickResult.clicked) {
-        return { success: false, error: 'Click failed', logs };
-      }
-      
-      await this.humanLikeDelay(5000, 8000);
-      
-      // Verify
-      const verifyResult = await page.evaluate(() => {
-        const followingBtn = document.querySelector('button:has-text("Following"), button:has-text("Unfollow"), [data-e2e="following-button"]');
-        if (followingBtn) {
-          return { success: true, text: followingBtn.textContent };
-        }
-        return { success: false };
-      });
-      
-      if (verifyResult.success) {
-        return { success: true, verified: true, details: `Now following - ${verifyResult.text}`, logs };
-      }
-      
-      return { success: false, error: 'Verification failed', logs };
-      
-    } catch (error) {
-      logs.push(`Error: ${error.message}`);
-      return { success: false, error: error.message, logs };
-    }
-  }
-
-  // ==========================================
-  // INSTAGRAM SPECIFIC ACTIONS
-  // ==========================================
-  
-  async performInstagramFollow(page, profileUrl) {
-    const logs = [];
-    
-    try {
-      logs.push(`Navigating to: ${profileUrl}`);
-      await page.goto(profileUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-      await this.humanLikeDelay(3000, 5000);
-      
-      // Check for login wall
-      const loginWall = await page.$('a[href="/accounts/login/"], div:has-text("Log in to follow")');
-      if (loginWall) {
-        return {
-          success: false,
-          requiresLogin: true,
-          error: 'Instagram requires login to follow',
-          logs
-        };
-      }
-
-      const followSelectors = [
-        'button._acan._acap._acas._aj1-._ap30',
-        'button[type="button"]:has-text("Follow")',
-        'div[role="button"]:has-text("Follow")',
-        'button:has-text("Follow")',
-        'svg[aria-label="Follow"]',
-        '[data-testid="followBtn"]'
-      ];
-      
-      let followBtn = null;
-      let usedSelector = null;
-      
-      for (const selector of followSelectors) {
-        try {
-          const btn = await page.waitForSelector(selector, { visible: true, timeout: 3000 });
-          if (btn) {
-            const text = await page.evaluate(el => el.textContent || el.getAttribute('aria-label'), btn);
-            if (text && text.toLowerCase().includes('follow')) {
-              followBtn = btn;
-              usedSelector = selector;
-              break;
-            }
-          }
-        } catch (e) {}
-      }
-      
-      if (!followBtn) {
-        // Check if already following
-        const followingSelectors = [
-          'button:has-text("Following")',
-          'button:has-text("Unfollow")',
-          'button._acan._acap._acat._aj1-'
-        ];
-        
-        for (const selector of followingSelectors) {
-          const btn = await page.$(selector);
-          if (btn) {
-            return { success: true, alreadyFollowing: true, details: 'Already following', logs };
-          }
-        }
-        
-        return { success: false, error: 'Follow button not found', logs };
-      }
-      
-      logs.push(`Found button: ${usedSelector}`);
-      
-      await page.evaluate((sel) => {
-        const btn = document.querySelector(sel);
-        if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }, usedSelector);
-      
-      await this.humanLikeDelay(1000, 2000);
-      await this.humanLikeMouseMove(page, usedSelector);
-      
-      const clickResult = await page.evaluate((selectors) => {
-        for (const sel of selectors) {
-          const btn = document.querySelector(sel);
-          if (btn) {
-            btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            try {
-              btn.click();
-              btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-            } catch (e) {}
-            return { clicked: true, text: btn.textContent };
-          }
-        }
-        return { clicked: false };
-      }, followSelectors);
-      
-      await this.humanLikeDelay(5000, 8000);
-      
-      // Verify
-      const verifyResult = await page.evaluate(() => {
-        const unfollowBtn = document.querySelector('button:has-text("Following"), button:has-text("Unfollow"), button._acan._acap._acat._aj1-');
-        return { success: !!unfollowBtn, text: unfollowBtn?.textContent };
-      });
-      
-      if (verifyResult.success) {
-        return { success: true, verified: true, details: verifyResult.text, logs };
-      }
-      
-      return { success: false, error: 'Verification failed', logs };
-      
-    } catch (error) {
-      logs.push(`Error: ${error.message}`);
-      return { success: false, error: error.message, logs };
-    }
-  }
-
-  // ==========================================
-  // TWITTER/X SPECIFIC ACTIONS
-  // ==========================================
-  
-  async performTwitterFollow(page, profileUrl) {
-    const logs = [];
-    
-    try {
-      logs.push(`Navigating to: ${profileUrl}`);
-      await page.goto(profileUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-      await this.humanLikeDelay(3000, 5000);
-      
-      // Check login required
-      const loginPrompt = await page.$('a[href="/login"], div:has-text("Sign in to follow")');
-      if (loginPrompt) {
-        return {
-          success: false,
-          requiresLogin: true,
-          error: 'Twitter requires login to follow',
-          logs
-        };
-      }
-
-      const followSelectors = [
-        'button[data-testid="follow"]',
-        'button:has-text("Follow")',
-        'div[role="button"]:has-text("Follow")'
-      ];
-      
-      let followBtn = null;
-      
-      for (const selector of followSelectors) {
-        try {
-          const btn = await page.waitForSelector(selector, { visible: true, timeout: 3000 });
-          if (btn) {
-            followBtn = btn;
-            break;
-          }
-        } catch (e) {}
-      }
-      
-      if (!followBtn) {
-        // Check if already following
-        const followingBtn = await page.$('button[data-testid="unfollow"], button:has-text("Following")');
-        if (followingBtn) {
-          return { success: true, alreadyFollowing: true, details: 'Already following', logs };
-        }
-        return { success: false, error: 'Follow button not found', logs };
-      }
-      
-      await this.humanLikeMouseMove(page, followSelectors[0]);
-      await followBtn.click();
-      await this.humanLikeDelay(3000, 5000);
-      
-      // Verify
-      const following = await page.$('button[data-testid="unfollow"]');
-      if (following) {
-        return { success: true, verified: true, details: 'Now following', logs };
-      }
-      
-      return { success: false, error: 'Verification failed', logs };
-      
-    } catch (error) {
-      logs.push(`Error: ${error.message}`);
-      return { success: false, error: error.message, logs };
-    }
-  }
-
-  // ==========================================
-  // YOUTUBE SPECIFIC ACTIONS
-  // ==========================================
-  
-  async performYouTubeSubscribe(page, channelUrl) {
-    const logs = [];
-    
-    try {
-      logs.push(`Navigating to: ${channelUrl}`);
-      await page.goto(channelUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-      await this.humanLikeDelay(3000, 5000);
-      
-      const subscribeSelectors = [
-        'button:has-text("Subscribe")',
-        'yt-formatted-string:has-text("Subscribe")',
-        'button[aria-label*="Subscribe"]'
-      ];
-      
-      let subBtn = null;
-      
-      for (const selector of subscribeSelectors) {
-        try {
-          const btn = await page.waitForSelector(selector, { visible: true, timeout: 3000 });
-          if (btn) {
-            subBtn = btn;
-            break;
-          }
-        } catch (e) {}
-      }
-      
-      if (!subBtn) {
-        const subscribedBtn = await page.$('button:has-text("Subscribed")');
-        if (subscribedBtn) {
-          return { success: true, alreadySubscribed: true, details: 'Already subscribed', logs };
-        }
-        return { success: false, error: 'Subscribe button not found', logs };
-      }
-      
-      await this.humanLikeMouseMove(page, subscribeSelectors[0]);
-      await subBtn.click();
-      await this.humanLikeDelay(3000, 5000);
-      
-      const subscribed = await page.$('button:has-text("Subscribed")');
-      if (subscribed) {
-        return { success: true, verified: true, details: 'Subscribed successfully', logs };
-      }
-      
-      return { success: false, error: 'Verification failed', logs };
-      
-    } catch (error) {
-      logs.push(`Error: ${error.message}`);
-      return { success: false, error: error.message, logs };
-    }
-  }
-
-  // ==========================================
-  // UNIVERSAL ACTIONS (Work on all platforms)
-  // ==========================================
-  
-  async performLike(page, targetUrl, platform) {
-    try {
-      await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-      await this.humanLikeDelay(2000, 4000);
-      
-      const selectors = {
-        instagram: ['svg[aria-label="Like"]', 'button:has(svg[aria-label="Like"])'],
-        tiktok: ['[data-e2e="like-button"]', 'div:has-text("Like"):not(:has-text("Liked"))'],
-        twitter: ['button[data-testid="like"]', 'div[role="button"]:has-text("Like")'],
-        youtube: ['button[aria-label*="like" i]', 'yt-icon-button:has-text("like")']
-      };
-      
-      const platformSelectors = selectors[platform] || selectors.instagram;
-      
-      for (const selector of platformSelectors) {
-        const btn = await page.$(selector);
-        if (btn) {
-          await this.humanLikeMouseMove(page, selector);
-          await btn.click();
-          await this.humanLikeDelay(3000, 5000);
-          return { success: true, details: 'Like clicked' };
-        }
-      }
-      
-      return { success: false, error: 'Like button not found' };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  async performView(page, targetUrl, platform, viewDuration = 15000) {
-    try {
-      await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-      
-      const startTime = Date.now();
-      
-      // Simulate watching with random scrolls
-      while (Date.now() - startTime < viewDuration) {
-        await this.humanLikeScroll(page);
-        await this.humanLikeDelay(2000, 4000);
-      }
-      
-      return { 
-        success: true, 
-        viewTime: Date.now() - startTime,
-        details: `Viewed for ${(Date.now() - startTime)/1000}s`
-      };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  async performShare(page, targetUrl, platform) {
-    // Shares are complex, simulate with like as fallback
-    return this.performLike(page, targetUrl, platform);
-  }
-
   async closeBrowser(taskId) {
     try {
       const browser = this.browsers.get(taskId);
@@ -734,6 +274,25 @@ class BrowserManager {
   async humanLikeDelay(min = 5000, max = 10000) {
     const delay = Math.floor(Math.random() * (max - min + 1)) + min;
     await new Promise(resolve => setTimeout(resolve, delay));
+  }
+
+  async humanLikeMouseMove(page, selector) {
+    try {
+      const element = await page.$(selector);
+      if (!element) return false;
+      
+      const box = await element.boundingBox();
+      if (!box) return false;
+      
+      const x = box.x + box.width / 2 + (Math.random() * 20 - 10);
+      const y = box.y + box.height / 2 + (Math.random() * 20 - 10);
+      
+      await page.mouse.move(x, y, { steps: 10 + Math.floor(Math.random() * 10) });
+      await this.humanLikeDelay(500, 1500);
+      return true;
+    } catch (error) {
+      return false;
+    }
   }
 
   async humanLikeScroll(page) {
