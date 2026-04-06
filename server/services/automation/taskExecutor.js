@@ -44,14 +44,16 @@ class TaskExecutor {
         throw new Error('Task already running');
       }
 
+      // Initialize fresh task state - THIS WAS THE BUG, need fresh state
       const taskState = {
         startTime: Date.now(),
         shouldStop: false,
-        consecutiveErrors: 0,
+        consecutiveErrors: 0,  // Start at 0
         successfulActions: 0,
         lastSuccessTime: null,
         proxyFailures: 0,
-        loginRequiredCount: 0
+        loginRequiredCount: 0,
+        totalAttempts: 0
       };
       
       this.runningTasks.set(taskId, taskState);
@@ -59,7 +61,7 @@ class TaskExecutor {
       task.status = 'running';
       task.startedAt = new Date();
       task.logs.push({
-        message: `Task started - Platform: ${task.platform}, Service: ${task.service}`,
+        message: `Task started - Platform: ${task.platform}, Service: ${task.service}, Target: ${task.targetUrl}`,
         type: 'info',
         timestamp: new Date()
       });
@@ -68,115 +70,117 @@ class TaskExecutor {
       let completedCount = task.completed || 0;
       const targetCount = task.quantity;
       const maxConsecutiveErrors = 3;
-      const maxLoginRequired = 2; // Stop if login required multiple times
+      const maxLoginRequired = 2;
+
+      console.log(`[${taskId}] Starting execution: ${completedCount}/${targetCount} completed`);
 
       while (completedCount < targetCount && !taskState.shouldStop) {
         let browser = null;
         let proxyConfig = null;
         
         try {
+          // Get current state
           const currentState = this.runningTasks.get(taskId);
+          if (!currentState) {
+            throw new Error('Task state lost');
+          }
           
+          currentState.totalAttempts++;
+          
+          console.log(`[${taskId}] Attempt ${currentState.totalAttempts}: ${completedCount}/${targetCount} completed, Errors: ${currentState.consecutiveErrors}`);
+
           if (currentState.consecutiveErrors >= maxConsecutiveErrors) {
             throw new Error(`Stopped after ${maxConsecutiveErrors} consecutive errors`);
           }
           
           if (currentState.loginRequiredCount >= maxLoginRequired) {
-            throw new Error(`Stopped - Login required for ${currentState.loginRequiredCount} attempts. TikTok/Instagram require logged-in accounts.`);
+            throw new Error(`Login required for ${currentState.loginRequiredCount} attempts. ${task.platform} requires authenticated accounts.`);
           }
 
-          if (currentState.proxyFailures >= 5) {
-            throw new Error(`Stopped after 5 proxy failures`);
-          }
-
-          // Get fresh proxy
+          // Get fresh proxy for each action
           proxyConfig = browserManager.getRandomProxy();
           
           task.logs.push({
-            message: `Action ${completedCount + 1}/${targetCount} - ${task.platform} ${task.service}`,
+            message: `Action ${completedCount + 1}/${targetCount} - ${task.platform} ${task.service} ${proxyConfig?.server ? '(with proxy)' : '(direct)'}`,
             type: 'info',
             timestamp: new Date()
           });
           await task.save();
 
-          // Create browser
+          // Create browser and page
+          console.log(`[${taskId}] Creating browser...`);
           browser = await browserManager.createBrowser(taskId, proxyConfig);
           const page = await browserManager.createPage(taskId, task.platform, proxyConfig);
+          console.log(`[${taskId}] Browser created successfully`);
 
-          // Route to platform-specific action
+          // Route to correct platform action
           let actionResult = { success: false, details: 'Not executed' };
-          const platform = task.platform.toLowerCase();
-          const service = task.service.toLowerCase();
+          const platform = (task.platform || '').toLowerCase();
+          const service = (task.service || '').toLowerCase();
           
-          // Handle different platforms
+          console.log(`[${taskId}] Executing ${platform} ${service} for ${task.targetUrl}`);
+
+          // TIKTOK
           if (platform === 'tiktok') {
-            switch (service) {
-              case 'followers':
-                actionResult = await browserManager.performTikTokFollow(page, task.targetUrl);
-                break;
-              case 'likes':
-                actionResult = await browserManager.performLike(page, task.targetUrl, 'tiktok');
-                break;
-              case 'views':
-                actionResult = await browserManager.performView(page, task.targetUrl, 'tiktok', task.settings?.viewDuration || 15000);
-                break;
-              case 'shares':
-                actionResult = await browserManager.performShare(page, task.targetUrl, 'tiktok');
-                break;
-              default:
-                throw new Error(`Service ${service} not supported for TikTok`);
+            if (service === 'followers') {
+              actionResult = await browserManager.performTikTokFollow(page, task.targetUrl);
+            } else if (service === 'likes') {
+              actionResult = await browserManager.performLike(page, task.targetUrl, 'tiktok');
+            } else if (service === 'views') {
+              // Views just need to load and watch
+              actionResult = await browserManager.performView(page, task.targetUrl, 'tiktok', task.settings?.viewDuration || 15000);
+            } else if (service === 'shares') {
+              actionResult = await browserManager.performShare(page, task.targetUrl, 'tiktok');
+            } else {
+              throw new Error(`Service ${service} not supported for TikTok`);
             }
-          } else if (platform === 'instagram') {
-            switch (service) {
-              case 'followers':
-                actionResult = await browserManager.performInstagramFollow(page, task.targetUrl);
-                break;
-              case 'likes':
-                actionResult = await browserManager.performLike(page, task.targetUrl, 'instagram');
-                break;
-              case 'comments':
-                const commentText = task.settings?.commentText || 'Great post! 🔥';
-                actionResult = await browserManager.performComment(page, task.targetUrl, 'instagram', commentText);
-                break;
-              case 'views':
-                actionResult = await browserManager.performView(page, task.targetUrl, 'instagram', task.settings?.viewDuration || 10000);
-                break;
-              default:
-                throw new Error(`Service ${service} not supported for Instagram`);
+          }
+          // INSTAGRAM
+          else if (platform === 'instagram') {
+            if (service === 'followers') {
+              actionResult = await browserManager.performInstagramFollow(page, task.targetUrl);
+            } else if (service === 'likes') {
+              actionResult = await browserManager.performLike(page, task.targetUrl, 'instagram');
+            } else if (service === 'comments') {
+              const commentText = task.settings?.commentText || 'Great post! 🔥';
+              actionResult = await browserManager.performComment(page, task.targetUrl, 'instagram', commentText);
+            } else if (service === 'views') {
+              actionResult = await browserManager.performView(page, task.targetUrl, 'instagram', task.settings?.viewDuration || 10000);
+            } else {
+              throw new Error(`Service ${service} not supported for Instagram`);
             }
-          } else if (platform === 'twitter' || platform === 'x') {
-            switch (service) {
-              case 'followers':
-                actionResult = await browserManager.performTwitterFollow(page, task.targetUrl);
-                break;
-              case 'likes':
-                actionResult = await browserManager.performLike(page, task.targetUrl, 'twitter');
-                break;
-              default:
-                throw new Error(`Service ${service} not supported for Twitter/X`);
+          }
+          // TWITTER/X
+          else if (platform === 'twitter' || platform === 'x') {
+            if (service === 'followers') {
+              actionResult = await browserManager.performTwitterFollow(page, task.targetUrl);
+            } else if (service === 'likes') {
+              actionResult = await browserManager.performLike(page, task.targetUrl, 'twitter');
+            } else {
+              throw new Error(`Service ${service} not supported for Twitter/X`);
             }
-          } else if (platform === 'youtube') {
-            switch (service) {
-              case 'subscribers':
-                actionResult = await browserManager.performYouTubeSubscribe(page, task.targetUrl);
-                break;
-              case 'likes':
-                actionResult = await browserManager.performLike(page, task.targetUrl, 'youtube');
-                break;
-              case 'views':
-                actionResult = await browserManager.performView(page, task.targetUrl, 'youtube', task.settings?.viewDuration || 20000);
-                break;
-              default:
-                throw new Error(`Service ${service} not supported for YouTube`);
+          }
+          // YOUTUBE
+          else if (platform === 'youtube') {
+            if (service === 'subscribers') {
+              actionResult = await browserManager.performYouTubeSubscribe(page, task.targetUrl);
+            } else if (service === 'likes') {
+              actionResult = await browserManager.performLike(page, task.targetUrl, 'youtube');
+            } else if (service === 'views') {
+              actionResult = await browserManager.performView(page, task.targetUrl, 'youtube', task.settings?.viewDuration || 20000);
+            } else {
+              throw new Error(`Service ${service} not supported for YouTube`);
             }
           } else {
             throw new Error(`Platform ${platform} not supported`);
           }
 
-          // Wait for API calls
-          await browserManager.humanLikeDelay(6000, 10000);
+          console.log(`[${taskId}] Action result:`, actionResult);
 
-          // Handle result
+          // Wait for API calls to complete
+          await browserManager.humanLikeDelay(3000, 5000);
+
+          // Process result
           if (actionResult.requiresLogin) {
             currentState.loginRequiredCount++;
             task.logs.push({
@@ -188,7 +192,7 @@ class TaskExecutor {
             completedCount++;
             task.completed = completedCount;
             task.progress = Math.floor((completedCount / targetCount) * 100);
-            currentState.consecutiveErrors = 0;
+            currentState.consecutiveErrors = 0; // RESET on success
             currentState.successfulActions++;
             currentState.lastSuccessTime = Date.now();
             
@@ -197,24 +201,30 @@ class TaskExecutor {
               type: 'success',
               timestamp: new Date()
             });
+            
+            console.log(`[${taskId}] SUCCESS: ${completedCount}/${targetCount}`);
           } else {
+            // Action failed but not login required
             currentState.consecutiveErrors++;
             task.logs.push({
-              message: `✗ Failed: ${actionResult.error || actionResult.details}`,
+              message: `✗ Failed: ${actionResult.error || actionResult.details || 'Unknown error'}`,
               type: 'error',
               timestamp: new Date()
             });
+            
+            console.log(`[${taskId}] FAILED: ${actionResult.error}, consecutiveErrors: ${currentState.consecutiveErrors}`);
           }
 
           await task.save();
 
-          // Dynamic delay
-          const baseDelay = task.settings?.speed === 'fast' ? 10000 : 
-                           task.settings?.speed === 'slow' ? 30000 : 20000;
-          const errorDelay = currentState.consecutiveErrors * 5000;
-          const totalDelay = baseDelay + errorDelay + Math.floor(Math.random() * 5000);
+          // Dynamic delay based on speed setting and error count
+          const baseDelay = task.settings?.speed === 'fast' ? 5000 : 
+                           task.settings?.speed === 'slow' ? 20000 : 10000;
+          const errorDelay = currentState.consecutiveErrors * 3000;
+          const totalDelay = baseDelay + errorDelay + Math.floor(Math.random() * 3000);
           
-          await browserManager.humanLikeDelay(totalDelay, totalDelay + 3000);
+          console.log(`[${taskId}] Waiting ${totalDelay}ms before next action`);
+          await browserManager.humanLikeDelay(totalDelay, totalDelay + 2000);
 
         } catch (actionError) {
           console.error(`[${taskId}] Action error:`, actionError);
@@ -222,6 +232,7 @@ class TaskExecutor {
           const currentState = this.runningTasks.get(taskId);
           if (currentState) {
             currentState.consecutiveErrors++;
+            console.log(`[${taskId}] Error count: ${currentState.consecutiveErrors}`);
           }
           
           task.logs.push({
@@ -231,12 +242,14 @@ class TaskExecutor {
           });
           await task.save();
           
-          await browserManager.humanLikeDelay(15000, 25000);
+          await browserManager.humanLikeDelay(10000, 15000);
           
         } finally {
+          // Always close browser
           if (browser) {
             try {
               await browserManager.closeBrowser(taskId);
+              console.log(`[${taskId}] Browser closed`);
             } catch (e) {
               console.error(`[${taskId}] Error closing browser:`, e);
             }
@@ -251,15 +264,14 @@ class TaskExecutor {
       task.status = finalStatus;
       task.completedAt = new Date();
       
-      const totalAttempts = (finalState?.successfulActions || 0) + (finalState?.consecutiveErrors || 0);
-      const successRate = totalAttempts > 0 
-        ? Math.round(((finalState?.successfulActions || 0) / totalAttempts) * 100) 
+      const successRate = finalState?.totalAttempts > 0 
+        ? Math.round(((finalState?.successfulActions || 0) / finalState.totalAttempts) * 100) 
         : 0;
       
       let finalMessage = `Task ${finalStatus}. ${completedCount}/${targetCount} completed. Success rate: ${successRate}%`;
       
       if (finalState?.loginRequiredCount >= maxLoginRequired) {
-        finalMessage += ` - Note: Login required for ${task.platform}. Consider adding authenticated sessions.`;
+        finalMessage += ` - Note: ${task.platform} requires login for ${task.service}.`;
       }
       
       task.logs.push({
@@ -267,6 +279,8 @@ class TaskExecutor {
         type: 'info',
         timestamp: new Date()
       });
+      
+      console.log(`[${taskId}] Task ${finalStatus}: ${finalMessage}`);
       await task.save();
 
     } catch (error) {
@@ -288,6 +302,7 @@ class TaskExecutor {
         console.error(`[${taskId}] Cleanup error:`, e);
       }
       this.runningTasks.delete(taskId);
+      console.log(`[${taskId}] Task cleaned up`);
     }
   }
 
